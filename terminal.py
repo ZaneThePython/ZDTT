@@ -12,39 +12,72 @@ import shutil
 import readline
 import glob
 import atexit
+import logging
+from datetime import datetime
+import urllib.request
+import urllib.error
 
 
-def check_debian_based():
-    """Check if the system is Debian-based Linux"""
+def check_system_compatibility():
+    """Check system compatibility and warn if not Debian-based"""
     # Check if running on Linux
     if sys.platform != 'linux':
-        print("Error: ZDTT Terminal only works on Debian-based Linux systems.")
-        print(f"Detected platform: {sys.platform}")
-        sys.exit(1)
+        print("=" * 60)
+        print("⚠️  WARNING: ZDTT Terminal is designed for Linux systems")
+        print(f"   Detected platform: {sys.platform}")
+        print("=" * 60)
+        print("ZDTT may not work correctly on your system.")
+        print("Some features may be unavailable or broken.")
+        print()
+        response = input("Continue anyway? (yes/no): ").strip().lower()
+        if response != 'yes':
+            print("Installation cancelled.")
+            sys.exit(0)
+        return False
     
     # Check for Debian-specific file
     if not os.path.exists('/etc/debian_version'):
-        print("Error: ZDTT Terminal only works on Debian-based Linux systems.")
-        print("This does not appear to be a Debian-based distribution.")
+        print("=" * 60)
+        print("⚠️  WARNING: Non-Debian Distribution Detected")
+        print("=" * 60)
+        print("ZDTT Terminal is optimized for Debian-based systems.")
         print("(Debian, Ubuntu, Linux Mint, Pop!_OS, etc.)")
-        sys.exit(1)
+        print()
+        print("Running on a non-Debian system may result in:")
+        print("  • Some commands may not work as expected")
+        print("  • Auto-install features (like neofetch) may fail")
+        print("  • Reduced plugin compatibility")
+        print("  • Package management commands unavailable")
+        print()
+        response = input("Continue installation? (yes/no): ").strip().lower()
+        if response != 'yes':
+            print("Installation cancelled.")
+            sys.exit(0)
+        return False
     
-    # Optionally, display the Debian version
-    try:
-        with open('/etc/debian_version', 'r') as f:
-            debian_version = f.read().strip()
-            # Silently note the version (for debugging if needed)
-    except:
-        pass
+    # It's a Debian-based system
+    return True
 
 
 class ZDTTTerminal:
-    def __init__(self):
+    def __init__(self, is_debian=True):
         self.username = getpass.getuser()
         self.running = True
         self.current_dir = os.getcwd()
+        self.is_debian = is_debian
+        self.zdtt_dir = os.path.expanduser("~/.zdtt")
         self.history_file = os.path.expanduser("~/.zdtt_history")
-        self.plugin_dir = os.path.expanduser("~/.zdtt/plugins")
+        self.plugin_dir = os.path.join(self.zdtt_dir, "plugins")
+        self.log_file = os.path.join(self.zdtt_dir, "plugin_errors.log")
+        self.banner_file = os.path.join(self.zdtt_dir, "banner.txt")
+        self.aliases_file = os.path.join(self.zdtt_dir, "aliases")
+        
+        # Setup logging for plugins
+        self.setup_logging()
+        
+        # Load user aliases
+        self.aliases = {}
+        self.load_aliases()
         
         # Read version from version.txt
         self.version = self.read_version()
@@ -65,6 +98,9 @@ class ZDTTTerminal:
             'echo': self.cmd_echo,
             'history': self.cmd_history,
             'plugins': self.cmd_plugins,
+            'alias': self.cmd_alias,
+            'unalias': self.cmd_unalias,
+            'zps': self.cmd_zps,
             # System commands
             'ls': self.cmd_ls,
             'pwd': self.cmd_pwd,
@@ -89,6 +125,19 @@ class ZDTTTerminal:
         # Load plugins
         self.load_plugins()
     
+    def setup_logging(self):
+        """Setup logging for plugin errors"""
+        # Create .zdtt directory if it doesn't exist
+        os.makedirs(self.zdtt_dir, exist_ok=True)
+        
+        # Configure logger
+        logging.basicConfig(
+            filename=self.log_file,
+            level=logging.ERROR,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+    
     def read_version(self):
         """Read version from version.txt file"""
         # Try multiple locations for version.txt
@@ -108,7 +157,25 @@ class ZDTTTerminal:
         return "0.0.1.a"
     
     def display_banner(self):
-        """Display the ZDTT ASCII art banner"""
+        """Display the ZDTT ASCII art banner (or custom banner if available)"""
+        # Check for custom banner
+        if os.path.exists(self.banner_file):
+            try:
+                with open(self.banner_file, 'r') as f:
+                    custom_banner = f.read()
+                    # Add version at the bottom if not already present
+                    if '{version}' in custom_banner:
+                        custom_banner = custom_banner.replace('{version}', self.version)
+                    print(custom_banner)
+                    # Show non-Debian warning
+                    if not self.is_debian:
+                        self._show_compatibility_warning()
+                    return
+            except Exception as e:
+                logging.error(f"Failed to load custom banner: {e}")
+                # Fall through to default banner
+        
+        # Default banner
         banner = f"""
 ░█████████ ░███████   ░██████████░██████████
       ░██  ░██   ░██      ░██        ░██    
@@ -122,6 +189,16 @@ class ZDTTTerminal:
 ZDTT Terminal v{self.version}
 """
         print(banner)
+        
+        # Show non-Debian warning after banner
+        if not self.is_debian:
+            self._show_compatibility_warning()
+    
+    def _show_compatibility_warning(self):
+        """Show compatibility warning for non-Debian systems"""
+        print()
+        print("⚠️  Running on non-Debian system - limited support")
+        print()
     
     def setup_readline(self):
         """Setup readline for history and tab completion"""
@@ -154,8 +231,10 @@ ZDTT Terminal v{self.version}
         
         # If we're at the start or completing a command
         if line.startswith(text) or ' ' not in line[:readline.get_begidx()]:
-            # Complete command names
+            # Complete command names (built-in commands and aliases)
             options = [cmd for cmd in self.commands.keys() if cmd.startswith(text)]
+            # Add aliases
+            options.extend([alias for alias in self.aliases.keys() if alias.startswith(text)])
         else:
             # Complete filenames/directories
             if text.startswith('~'):
@@ -186,6 +265,8 @@ ZDTT Terminal v{self.version}
         
         # Look for Python files in the plugins directory
         plugin_files = glob.glob(os.path.join(self.plugin_dir, "*.py"))
+        loaded_count = 0
+        failed_count = 0
         
         for plugin_file in plugin_files:
             try:
@@ -205,8 +286,75 @@ ZDTT Terminal v{self.version}
                     plugin_commands = plugin_namespace['register_commands']()
                     if isinstance(plugin_commands, dict):
                         self.commands.update(plugin_commands)
+                        loaded_count += 1
+                    else:
+                        raise ValueError("register_commands() must return a dictionary")
+                else:
+                    raise ValueError("Plugin missing register_commands() function")
+                    
             except Exception as e:
-                print(f"Warning: Failed to load plugin {plugin_name}: {e}")
+                failed_count += 1
+                # Log error instead of printing
+                logging.error(f"Failed to load plugin '{plugin_name}': {str(e)}")
+                logging.error(f"Plugin file: {plugin_file}")
+        
+        # Show brief status if there were failures
+        if failed_count > 0:
+            print(f"⚠ {failed_count} plugin(s) failed to load. Check ~/.zdtt/plugin_errors.log")
+    
+    def load_aliases(self):
+        """Load user-defined aliases from file"""
+        if not os.path.exists(self.aliases_file):
+            return
+        
+        try:
+            with open(self.aliases_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    # Skip empty lines and comments
+                    if not line or line.startswith('#'):
+                        continue
+                    
+                    # Parse alias definition: alias_name=command
+                    if '=' in line:
+                        name, command = line.split('=', 1)
+                        name = name.strip()
+                        command = command.strip()
+                        if name and command:
+                            self.aliases[name] = command
+        except Exception as e:
+            logging.error(f"Failed to load aliases: {e}")
+    
+    def save_aliases(self):
+        """Save aliases to file"""
+        try:
+            with open(self.aliases_file, 'w') as f:
+                f.write("# ZDTT Terminal Aliases\n")
+                f.write("# Format: alias_name=command\n")
+                f.write("#\n")
+                for name, command in sorted(self.aliases.items()):
+                    f.write(f"{name}={command}\n")
+        except Exception as e:
+            logging.error(f"Failed to save aliases: {e}")
+            print(f"Error: Failed to save aliases: {e}")
+    
+    def expand_aliases(self, command_line):
+        """Expand aliases in command line"""
+        parts = command_line.strip().split()
+        if not parts:
+            return command_line
+        
+        # Check if the first word is an alias
+        cmd = parts[0]
+        if cmd in self.aliases:
+            # Replace the alias with its command
+            expanded = self.aliases[cmd]
+            # Add any remaining arguments
+            if len(parts) > 1:
+                expanded += ' ' + ' '.join(parts[1:])
+            return expanded
+        
+        return command_line
     
     def get_prompt(self):
         """Return the custom prompt string with colors"""
@@ -234,7 +382,10 @@ ZDTT Terminal v{self.version}
         print("  echo <message>       - Echo a message")
         print("  about                - About ZDTT Terminal")
         print("  history              - Show command history")
-        print("  plugins              - List loaded plugins")
+        print("  plugins [reload]     - List or reload plugins")
+        print("  alias [name=cmd]     - Create or display command aliases")
+        print("  unalias <name>       - Remove an alias")
+        print("  zps install <url>    - Install plugin from URL")
         print("  exit                 - Exit ZDTT (return to shell)")
         print("  quit                 - Quit and close terminal window")
         print()
@@ -245,7 +396,7 @@ ZDTT Terminal v{self.version}
         print("  cat <file>           - Display file contents")
         print("  mkdir <directory>    - Create directory")
         print("  touch <file>         - Create empty file")
-        print("  rm [-r] <file>       - Remove file or directory")
+        print("  rm [-rf] <file>      - Remove file/directory (prompts without -f)")
         print("  mv <src> <dest>      - Move/rename file")
         print("  cp [-r] <src> <dest> - Copy file")
         print("  grep <pattern> <file> - Search for pattern in file")
@@ -285,15 +436,32 @@ ZDTT Terminal v{self.version}
         """Display information about ZDTT Terminal"""
         print(f"\nZDTT Terminal v{self.version}")
         print("A custom terminal interface for Debian-based Linux")
+        
+        # Show distribution status
+        if self.is_debian:
+            print("Running on: Debian-based system (fully supported)")
+        else:
+            print("Running on: Non-Debian system (limited support)")
+        
         print()
         print("Features:")
-        print("  • Command history with ↑/↓ navigation")
+        print("  • Command history with ↑/↓ navigation (1000 commands)")
         print("  • Tab completion for commands and files")
+        print("  • Command aliases (alias g=git)")
         print("  • Colorized prompt")
-        print("  • Plugin system for extensibility")
+        print("  • Plugin system with ZPS package manager")
+        print("  • Plugin hot-reload (plugins reload)")
+        print("  • Safe rm with confirmation prompts")
+        print("  • Custom banner support (~/.zdtt/banner.txt)")
         print("  • Native command support")
         print("  • System command execution via -oszdtt flag")
         print("  • Clean, premium interface")
+        print()
+        print("Configuration:")
+        print(f"  • ZDTT directory: {self.zdtt_dir}")
+        print(f"  • Aliases: {self.aliases_file}")
+        print(f"  • Custom banner: {self.banner_file}")
+        print(f"  • Plugin errors: {self.log_file}")
         print()
     
     def cmd_history(self, args):
@@ -319,7 +487,31 @@ ZDTT Terminal v{self.version}
         print()
     
     def cmd_plugins(self, args):
-        """List loaded plugins"""
+        """List or reload plugins"""
+        # Check for reload subcommand
+        if args and args[0] == 'reload':
+            print("Reloading plugins...")
+            # Remove plugin commands from command dict
+            plugin_commands = []
+            for cmd_name, cmd_func in list(self.commands.items()):
+                # Check if it's not a built-in command (hacky but works)
+                if hasattr(cmd_func, '__self__') and cmd_func.__self__ != self:
+                    plugin_commands.append(cmd_name)
+            
+            for cmd in plugin_commands:
+                del self.commands[cmd]
+            
+            # Clear aliases to avoid conflicts
+            self.aliases.clear()
+            self.load_aliases()
+            
+            # Reload plugins
+            self.load_plugins()
+            print("✓ Plugins reloaded successfully!")
+            print()
+            return
+        
+        # List plugins
         plugin_files = glob.glob(os.path.join(self.plugin_dir, "*.py"))
         
         if not plugin_files:
@@ -327,6 +519,7 @@ ZDTT Terminal v{self.version}
             print(f"Plugin directory: {self.plugin_dir}")
             print("\nTo create a plugin, create a .py file with a register_commands() function")
             print("that returns a dictionary of command names to functions.")
+            print("\nOr use: zps install <url> to install from a URL")
             print()
             return
         
@@ -335,6 +528,154 @@ ZDTT Terminal v{self.version}
             plugin_name = os.path.basename(plugin_file)[:-3]
             print(f"  • {plugin_name}")
         print()
+        print(f"Plugin directory: {self.plugin_dir}")
+        print(f"Error log: {self.log_file}")
+        print()
+        print("Commands:")
+        print("  plugins reload  - Reload all plugins without restarting")
+        print()
+    
+    def cmd_alias(self, args):
+        """Create or display command aliases"""
+        if not args:
+            # Display all aliases
+            if not self.aliases:
+                print("\nNo aliases defined.")
+                print("Usage: alias name=command")
+                print("Example: alias g=git")
+                print()
+            else:
+                print("\nDefined Aliases:")
+                for name, command in sorted(self.aliases.items()):
+                    print(f"  {name}={command}")
+                print()
+            return
+        
+        # Parse alias definition
+        alias_def = ' '.join(args)
+        
+        if '=' not in alias_def:
+            # Display specific alias
+            alias_name = args[0]
+            if alias_name in self.aliases:
+                print(f"{alias_name}={self.aliases[alias_name]}")
+            else:
+                print(f"alias: {alias_name}: not found")
+            return
+        
+        # Create new alias
+        name, command = alias_def.split('=', 1)
+        name = name.strip()
+        command = command.strip()
+        
+        if not name or not command:
+            print("alias: invalid format")
+            print("Usage: alias name=command")
+            return
+        
+        # Check if alias would shadow a built-in command
+        if name in self.commands:
+            print(f"Warning: '{name}' is a built-in command. Alias will take precedence.")
+        
+        self.aliases[name] = command
+        self.save_aliases()
+        print(f"Alias created: {name}={command}")
+    
+    def cmd_unalias(self, args):
+        """Remove command aliases"""
+        if not args:
+            print("unalias: missing alias name")
+            print("Usage: unalias name")
+            return
+        
+        name = args[0]
+        if name in self.aliases:
+            del self.aliases[name]
+            self.save_aliases()
+            print(f"Alias removed: {name}")
+        else:
+            print(f"unalias: {name}: not found")
+    
+    def cmd_zps(self, args):
+        """ZDTT Package System - Install plugins from URLs"""
+        if not args:
+            print("\nZDTT Package System (ZPS)")
+            print("\nUsage:")
+            print("  zps install <url>    - Install plugin from URL")
+            print("  zps list             - List installed plugins (same as 'plugins')")
+            print("\nExamples:")
+            print("  zps install https://plugins.zane.org/example_plugin.py")
+            print("  zps install https://raw.githubusercontent.com/user/repo/plugin.py")
+            print()
+            return
+        
+        subcommand = args[0]
+        
+        if subcommand == 'list':
+            self.cmd_plugins([])
+            return
+        
+        if subcommand == 'install':
+            if len(args) < 2:
+                print("zps install: missing URL")
+                print("Usage: zps install <url>")
+                return
+            
+            url = args[1]
+            
+            # Extract filename from URL
+            filename = url.split('/')[-1]
+            
+            # Validate it's a .py file
+            if not filename.endswith('.py'):
+                print(f"Error: '{filename}' is not a Python file")
+                print("Plugin URLs must end with .py")
+                return
+            
+            # Create plugins directory if it doesn't exist
+            os.makedirs(self.plugin_dir, exist_ok=True)
+            
+            target_path = os.path.join(self.plugin_dir, filename)
+            
+            # Check if plugin already exists
+            if os.path.exists(target_path):
+                response = input(f"Plugin '{filename}' already exists. Overwrite? (yes/no): ").strip().lower()
+                if response != 'yes':
+                    print("Installation cancelled.")
+                    return
+            
+            print(f"Downloading {filename}...")
+            
+            try:
+                # Download the file
+                with urllib.request.urlopen(url) as response:
+                    plugin_content = response.read()
+                
+                # Write to plugin directory
+                with open(target_path, 'wb') as f:
+                    f.write(plugin_content)
+                
+                print(f"✓ Plugin '{filename}' installed successfully!")
+                print(f"  Location: {target_path}")
+                print()
+                print("To use the plugin:")
+                print("  1. Type 'plugins reload' to load it now")
+                print("  2. Or restart ZDTT")
+                print()
+                
+            except urllib.error.HTTPError as e:
+                print(f"Error: Failed to download plugin (HTTP {e.code})")
+                print(f"URL: {url}")
+            except urllib.error.URLError as e:
+                print(f"Error: Failed to connect to server")
+                print(f"Reason: {e.reason}")
+            except Exception as e:
+                print(f"Error: {e}")
+            
+            return
+        
+        print(f"zps: unknown subcommand '{subcommand}'")
+        print("Try: zps install <url>")
     
     def cmd_echo(self, args):
         """Echo the provided arguments"""
@@ -441,6 +782,22 @@ ZDTT Terminal v{self.version}
                     os.remove(path)
                 elif os.path.isdir(path):
                     if recursive:
+                        # Confirm before removing directory unless -f flag
+                        if not force:
+                            # Get absolute path for display
+                            abs_path = os.path.abspath(path)
+                            try:
+                                # Count items in directory
+                                item_count = sum(len(files) + len(dirs) for _, dirs, files in os.walk(path))
+                                print(f"rm: remove directory '{abs_path}' and its {item_count} items?")
+                            except:
+                                print(f"rm: remove directory '{abs_path}'?")
+                            
+                            response = input("Type 'yes' to confirm: ").strip().lower()
+                            if response != 'yes':
+                                print("rm: operation cancelled")
+                                continue
+                        
                         shutil.rmtree(path)
                     else:
                         print(f"rm: cannot remove '{path}': Is a directory")
@@ -543,6 +900,15 @@ ZDTT Terminal v{self.version}
         """Display system info with neofetch (auto-installs if needed)"""
         # Check if neofetch is installed
         if not shutil.which('neofetch'):
+            if not self.is_debian:
+                print("neofetch is not installed.")
+                print("Auto-install is only supported on Debian-based systems.")
+                print("Please install neofetch manually using your package manager:")
+                print("  • Arch/Manjaro: sudo pacman -S neofetch")
+                print("  • Fedora: sudo dnf install neofetch")
+                print("  • openSUSE: sudo zypper install neofetch")
+                return
+            
             print("neofetch is not installed. Installing...")
             print()
             try:
@@ -552,6 +918,7 @@ ZDTT Terminal v{self.version}
                 print()
             except subprocess.CalledProcessError:
                 print("Failed to install neofetch")
+                print("Try manually: sudo apt-get install neofetch")
                 return
         
         subprocess.run(['neofetch'] + args)
@@ -560,6 +927,9 @@ ZDTT Terminal v{self.version}
         """Parse and execute a command"""
         if not command_line.strip():
             return
+        
+        # Expand aliases first
+        command_line = self.expand_aliases(command_line)
         
         # Check for -oszdtt flag (Outside ZDTT)
         if '-oszdtt' in command_line:
@@ -607,10 +977,10 @@ ZDTT Terminal v{self.version}
 
 
 def main():
-    # Check if running on Debian-based Linux
-    check_debian_based()
+    # Check system compatibility
+    is_debian = check_system_compatibility()
     
-    terminal = ZDTTTerminal()
+    terminal = ZDTTTerminal(is_debian=is_debian)
     terminal.run()
 
 

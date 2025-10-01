@@ -70,37 +70,67 @@ if [ -f "$BIN_DIR/zdtt" ] || [ -d "$INSTALL_DIR" ]; then
 fi
 
 # Check if running on Debian-based Linux
-if [ ! -f /etc/debian_version ]; then
-    echo -e "${RED}Error: ZDTT Terminal only works on Debian-based Linux systems.${NC}"
-    echo "This does not appear to be a Debian-based distribution."
+IS_DEBIAN=false
+if [ -f /etc/debian_version ]; then
+    IS_DEBIAN=true
+    echo -e "${GREEN}✓${NC} Debian-based Linux detected"
+else
+    echo -e "${YELLOW}⚠${NC}  Non-Debian distribution detected"
     echo ""
-    echo "Press any key to exit..."
-    read -n 1 -s -r
-    exit 1
+    echo "ZDTT Terminal is optimized for Debian-based systems."
+    echo "(Debian, Ubuntu, Linux Mint, Pop!_OS, etc.)"
+    echo ""
+    echo "Running on a non-Debian system may result in:"
+    echo "  • Some commands may not work as expected"
+    echo "  • Auto-install features (like neofetch) will not work"
+    echo "  • Reduced plugin compatibility"
+    echo "  • Package management commands unavailable"
+    echo ""
+    read -p "Continue installation anyway? (yes/no): " -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+        echo "Installation cancelled."
+        echo ""
+        echo "Press any key to exit..."
+        read -n 1 -s -r
+        exit 0
+    fi
 fi
-
-echo -e "${GREEN}✓${NC} Debian-based Linux detected"
 
 # Check if Python 3 is installed
 if ! command -v python3 &> /dev/null; then
     echo -e "${RED}✗${NC} Python 3 is not installed"
     echo ""
-    echo "Installing Python 3..."
     
-    # Update package list and install Python 3
-    sudo apt-get update
-    sudo apt-get install -y python3
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to install Python 3${NC}"
-        echo "Please install Python 3 manually: sudo apt-get install python3"
+    if [ "$IS_DEBIAN" = true ]; then
+        echo "Installing Python 3..."
+        
+        # Update package list and install Python 3
+        sudo apt-get update
+        sudo apt-get install -y python3
+        
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to install Python 3${NC}"
+            echo "Please install Python 3 manually: sudo apt-get install python3"
+            echo ""
+            echo "Press any key to exit..."
+            read -n 1 -s -r
+            exit 1
+        fi
+        
+        echo -e "${GREEN}✓${NC} Python 3 installed successfully"
+    else
+        echo -e "${RED}Python 3 is required but auto-install is not supported on non-Debian systems.${NC}"
+        echo ""
+        echo "Please install Python 3 manually using your package manager:"
+        echo "  • Arch/Manjaro: sudo pacman -S python"
+        echo "  • Fedora: sudo dnf install python3"
+        echo "  • openSUSE: sudo zypper install python3"
         echo ""
         echo "Press any key to exit..."
         read -n 1 -s -r
         exit 1
     fi
-    
-    echo -e "${GREEN}✓${NC} Python 3 installed successfully"
 else
     PYTHON_VERSION=$(python3 --version 2>&1)
     echo -e "${GREEN}✓${NC} Python 3 is already installed: ${PYTHON_VERSION}"

@@ -1,0 +1,13 @@
+
+╔══════════════════════════════════════════╗
+║                                          ║
+║        Welcome to ZDTT Terminal!        ║
+║                                          ║
+║     Your Custom Terminal Experience     ║
+║                                          ║
+╚══════════════════════════════════════════╝
+
+         ZDTT Terminal v{version}
+
+   Type 'help' to see available commands
+
