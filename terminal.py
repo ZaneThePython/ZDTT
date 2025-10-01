@@ -46,6 +46,9 @@ class ZDTTTerminal:
         self.history_file = os.path.expanduser("~/.zdtt_history")
         self.plugin_dir = os.path.expanduser("~/.zdtt/plugins")
         
+        # Read version from version.txt
+        self.version = self.read_version()
+        
         # ANSI color codes
         self.COLOR_RESET = '\033[0m'
         self.COLOR_GREEN = '\033[92m'
@@ -86,9 +89,27 @@ class ZDTTTerminal:
         # Load plugins
         self.load_plugins()
     
+    def read_version(self):
+        """Read version from version.txt file"""
+        # Try multiple locations for version.txt
+        version_paths = [
+            os.path.join(os.path.dirname(__file__), 'version.txt'),  # Same dir as script
+            os.path.expanduser("~/.local/share/zdtt/version.txt"),  # Installed location
+        ]
+        
+        for path in version_paths:
+            try:
+                with open(path, 'r') as f:
+                    return f.read().strip()
+            except FileNotFoundError:
+                continue
+        
+        # Fallback version if file not found
+        return "0.0.1.a"
+    
     def display_banner(self):
         """Display the ZDTT ASCII art banner"""
-        banner = """
+        banner = f"""
 ░█████████ ░███████   ░██████████░██████████
       ░██  ░██   ░██      ░██        ░██    
      ░██   ░██    ░██     ░██        ░██    
@@ -98,7 +119,7 @@ class ZDTTTerminal:
 ░█████████ ░███████       ░██        ░██    
                                             
                                             
-ZDTT Terminal v0.0.1.alpha
+ZDTT Terminal v{self.version}
 """
         print(banner)
     
@@ -262,7 +283,7 @@ ZDTT Terminal v0.0.1.alpha
     
     def cmd_about(self, args):
         """Display information about ZDTT Terminal"""
-        print("\nZDTT Terminal v0.0.1.alpha")
+        print(f"\nZDTT Terminal v{self.version}")
         print("A custom terminal interface for Debian-based Linux")
         print()
         print("Features:")

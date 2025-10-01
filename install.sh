@@ -114,10 +114,11 @@ mkdir -p "$BIN_DIR"
 
 echo "Installing ZDTT Terminal..."
 
-# Copy the terminal.py and install.sh to the installation directory
+# Copy the terminal.py, install.sh, and version.txt to the installation directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cp "$SCRIPT_DIR/terminal.py" "$INSTALL_DIR/terminal.py"
 cp "$SCRIPT_DIR/install.sh" "$INSTALL_DIR/install.sh"
+cp "$SCRIPT_DIR/version.txt" "$INSTALL_DIR/version.txt"
 chmod +x "$INSTALL_DIR/terminal.py"
 chmod +x "$INSTALL_DIR/install.sh"
 
@@ -155,7 +156,12 @@ case "$1" in
         echo "ZDTT Terminal has been uninstalled."
         ;;
     version)
-        echo "ZDTT Terminal v0.0.1.alpha"
+        if [ -f "$ZDTT_DIR/version.txt" ]; then
+            VERSION=$(cat "$ZDTT_DIR/version.txt")
+            echo "ZDTT Terminal v$VERSION"
+        else
+            echo "ZDTT Terminal v0.0.1.a"
+        fi
         echo ""
         echo "Features:"
         echo "  • Command history (↑/↓ navigation)"
