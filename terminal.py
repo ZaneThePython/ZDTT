@@ -119,6 +119,11 @@ class ZDTTTerminal:
             'date': self.cmd_date,
             'uname': self.cmd_uname,
             'grep': self.cmd_grep,
+            # Python commands
+            'python': self.cmd_python,
+            'python3': self.cmd_python3,
+            'pip': self.cmd_pip,
+            'pip3': self.cmd_pip3,
         }
         
         # Setup readline history and tab completion
@@ -181,6 +186,25 @@ class ZDTTTerminal:
     
     def display_banner(self):
         """Display the ZDTT ASCII art banner (or custom banner if available)"""
+        # Check terminal size to see if banner will fit
+        try:
+            term_size = shutil.get_terminal_size()
+            # Banner is 44 chars wide and 11 lines tall (including version)
+            # Add extra space for non-Debian warning if needed
+            min_height = 13 if not self.is_debian else 11
+            min_width = 44
+            
+            if term_size.columns < min_width or term_size.lines < min_height:
+                # Terminal too small, skip banner and just show minimal header
+                print(f"ZDTT Terminal v{self.version}")
+                if not self.is_debian:
+                    print("⚠️  Non-Debian system - limited support")
+                print()
+                return
+        except Exception:
+            # If we can't get terminal size, display the banner anyway
+            pass
+        
         # Check for custom banner
         if os.path.exists(self.banner_file):
             try:
@@ -439,6 +463,12 @@ ZDTT Terminal v{self.version}
         print("  nano <file>          - Edit file with nano")
         print("  neofetch             - Display system info (auto-installs)")
         print()
+        print("Python Commands:")
+        print("  python [args]        - Run Python interpreter")
+        print("  python3 [args]       - Run Python 3 interpreter")
+        print("  pip [args]           - Run pip package manager")
+        print("  pip3 [args]          - Run pip3 package manager")
+        print()
         print("Features:")
         print("  ↑/↓ arrows           - Navigate command history")
         print("  Tab                  - Auto-complete commands/files")
@@ -482,6 +512,7 @@ ZDTT Terminal v{self.version}
         print("  • Command aliases (alias g=git)")
         print("  • Flexible time/date display with multiple formats")
         print("  • Colorized prompt")
+        print("  • Smart banner (auto-hides on small terminals)")
         print("  • Plugin system with ZPS package manager")
         print("  • Plugin hot-reload (plugins reload)")
         print("  • Safe rm with confirmation prompts")
@@ -1029,6 +1060,32 @@ ZDTT Terminal v{self.version}
                 return
         
         subprocess.run(['neofetch'] + args)
+    
+    # Python Commands
+    
+    def cmd_python(self, args):
+        """Run python command"""
+        subprocess.run(['python'] + args)
+    
+    def cmd_python3(self, args):
+        """Run python3 command"""
+        subprocess.run(['python3'] + args)
+    
+    def cmd_pip(self, args):
+        """Run pip command"""
+        if shutil.which('pip'):
+            subprocess.run(['pip'] + args)
+        else:
+            print("pip: command not found")
+            print("Try installing with: sudo apt-get install python3-pip")
+    
+    def cmd_pip3(self, args):
+        """Run pip3 command"""
+        if shutil.which('pip3'):
+            subprocess.run(['pip3'] + args)
+        else:
+            print("pip3: command not found")
+            print("Try installing with: sudo apt-get install python3-pip")
     
     def execute_command(self, command_line):
         """Parse and execute a command"""
