@@ -16,6 +16,7 @@ import logging
 from datetime import datetime
 import urllib.request
 import urllib.error
+import time as time_module
 
 
 def check_system_compatibility():
@@ -101,6 +102,7 @@ class ZDTTTerminal:
             'alias': self.cmd_alias,
             'unalias': self.cmd_unalias,
             'zps': self.cmd_zps,
+            'time': self.cmd_time,
             # System commands
             'ls': self.cmd_ls,
             'pwd': self.cmd_pwd,
@@ -124,6 +126,9 @@ class ZDTTTerminal:
         
         # Load plugins
         self.load_plugins()
+        
+        # Check for updates (non-blocking)
+        self.check_for_updates()
     
     def setup_logging(self):
         """Setup logging for plugin errors"""
@@ -155,6 +160,24 @@ class ZDTTTerminal:
         
         # Fallback version if file not found
         return "0.0.1.a"
+    
+    def check_for_updates(self):
+        """Check if a new version is available"""
+        try:
+            # Get remote version
+            url = "https://zdtt-sources.zane.org/version.txt"
+            with urllib.request.urlopen(url, timeout=2) as response:
+                remote_version = response.read().decode('utf-8').strip()
+            
+            # Compare versions
+            if remote_version != self.version:
+                print()
+                print(f"🔔 Update available! Current: {self.version} → Latest: {remote_version}")
+                print("   Run 'zdtt update' to update")
+                print()
+        except Exception:
+            # Silently fail if we can't check for updates
+            pass
     
     def display_banner(self):
         """Display the ZDTT ASCII art banner (or custom banner if available)"""
@@ -367,11 +390,18 @@ ZDTT Terminal v{self.version}
         else:
             display_path = cwd
         
-        # Create colorized prompt
+        # Wrap ANSI codes in \001 and \002 so readline knows they're non-printable
+        # This fixes line wrapping issues with long commands
+        RL_PROMPT_START = '\001'
+        RL_PROMPT_END = '\002'
+        
+        # Create colorized prompt with readline-safe escape codes
         # [username in green @ ZDTT path in blue]=>
-        prompt = (f"[{self.COLOR_GREEN}{self.username}{self.COLOR_RESET}"
-                 f"@{self.COLOR_CYAN}ZDTT{self.COLOR_RESET} "
-                 f"{self.COLOR_BLUE}{display_path}{self.COLOR_RESET}]=> ")
+        prompt = (f"[{RL_PROMPT_START}{self.COLOR_GREEN}{RL_PROMPT_END}{self.username}"
+                 f"{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END}"
+                 f"@{RL_PROMPT_START}{self.COLOR_CYAN}{RL_PROMPT_END}ZDTT{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END} "
+                 f"{RL_PROMPT_START}{self.COLOR_BLUE}{RL_PROMPT_END}{display_path}"
+                 f"{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END}]=> ")
         return prompt
     
     def cmd_help(self, args):
@@ -386,6 +416,7 @@ ZDTT Terminal v{self.version}
         print("  alias [name=cmd]     - Create or display command aliases")
         print("  unalias <name>       - Remove an alias")
         print("  zps install <url>    - Install plugin from URL")
+        print("  time [options]       - Display date/time (MM/DD/YY 12h default)")
         print("  exit                 - Exit ZDTT (return to shell)")
         print("  quit                 - Quit and close terminal window")
         print()
@@ -445,9 +476,11 @@ ZDTT Terminal v{self.version}
         
         print()
         print("Features:")
+        print("  • Automatic update checking on startup")
         print("  • Command history with ↑/↓ navigation (1000 commands)")
         print("  • Tab completion for commands and files")
         print("  • Command aliases (alias g=git)")
+        print("  • Flexible time/date display with multiple formats")
         print("  • Colorized prompt")
         print("  • Plugin system with ZPS package manager")
         print("  • Plugin hot-reload (plugins reload)")
@@ -676,6 +709,80 @@ ZDTT Terminal v{self.version}
         
         print(f"zps: unknown subcommand '{subcommand}'")
         print("Try: zps install <url>")
+    
+    def cmd_time(self, args):
+        """Display current date and time with various formats"""
+        now = datetime.now()
+        
+        # Parse arguments
+        use_24h = False
+        custom_format = None
+        
+        for arg in args:
+            if arg in ['--24h', '-24', '24h']:
+                use_24h = True
+            elif arg in ['--12h', '-12', '12h']:
+                use_24h = False
+            elif arg.startswith('--format='):
+                custom_format = arg.split('=', 1)[1]
+            elif arg in ['--help', '-h']:
+                print("\nTime Command - Display current date and time")
+                print("\nUsage:")
+                print("  time              - Default format (MM/DD/YY 12h)")
+                print("  time --24h        - Use 24-hour format")
+                print("  time --12h        - Use 12-hour format (default)")
+                print("  time --format=... - Custom format string")
+                print("\nPre-defined formats:")
+                print("  time iso          - ISO 8601 format")
+                print("  time full         - Full date and time")
+                print("  time date         - Date only")
+                print("  time clock        - Time only")
+                print("  time unix         - Unix timestamp")
+                print("\nCustom format codes:")
+                print("  %Y - Year (4 digit)    %m - Month (01-12)")
+                print("  %d - Day (01-31)       %H - Hour (00-23)")
+                print("  %I - Hour (01-12)      %M - Minute (00-59)")
+                print("  %S - Second (00-59)    %p - AM/PM")
+                print("  %A - Weekday name      %B - Month name")
+                print("\nExample:")
+                print("  time --format='%Y-%m-%d %H:%M:%S'")
+                print()
+                return
+            elif arg == 'iso':
+                custom_format = '%Y-%m-%d %H:%M:%S'
+                use_24h = True
+            elif arg == 'full':
+                custom_format = '%A, %B %d, %Y at %I:%M:%S %p'
+            elif arg == 'date':
+                print(now.strftime('%m/%d/%y'))
+                return
+            elif arg == 'clock':
+                if use_24h:
+                    print(now.strftime('%H:%M:%S'))
+                else:
+                    print(now.strftime('%I:%M:%S %p'))
+                return
+            elif arg == 'unix':
+                print(int(time_module.time()))
+                return
+        
+        # Apply custom format if specified
+        if custom_format:
+            try:
+                print(now.strftime(custom_format))
+            except Exception as e:
+                print(f"Error: Invalid format string - {e}")
+            return
+        
+        # Default format: MM/DD/YY with time
+        date_str = now.strftime('%m/%d/%y')
+        
+        if use_24h:
+            time_str = now.strftime('%H:%M:%S')
+        else:
+            time_str = now.strftime('%I:%M:%S %p')
+        
+        print(f"{date_str} {time_str}")
     
     def cmd_echo(self, args):
         """Echo the provided arguments"""
