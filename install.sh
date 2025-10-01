@@ -256,6 +256,7 @@ case "$1" in
         ;;
     update)
         echo "Checking for updates..."
+        echo ""
         
         # Get current version
         if [ -f "$ZDTT_DIR/version.txt" ]; then
@@ -286,23 +287,64 @@ case "$1" in
         if [ "$CURRENT_VERSION" = "$REMOTE_VERSION" ]; then
             echo "✓ You're already running the latest version!"
         else
-            echo "Update available!"
+            echo "🔔 Update available!"
+            echo ""
             read -p "Do you want to update now? (yes/no): " -r
+            echo ""
+            
             if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-                # Run the installer
-                if [ -f "$ZDTT_DIR/install.sh" ]; then
-                    bash "$ZDTT_DIR/install.sh"
-                else
-                    echo "Downloading installer..."
-                    TEMP_INSTALLER="/tmp/zdtt_install.sh"
-                    if command -v curl &> /dev/null; then
-                        curl -sSL https://zdtt-sources.zane.org/install.sh -o "$TEMP_INSTALLER"
-                    else
-                        wget -qO "$TEMP_INSTALLER" https://zdtt-sources.zane.org/install.sh
-                    fi
-                    bash "$TEMP_INSTALLER"
-                    rm -f "$TEMP_INSTALLER"
+                echo "Updating ZDTT Terminal..."
+                echo ""
+                
+                # Download updated files
+                BASE_URL="https://zdtt-sources.zane.org"
+                UPDATE_FAILED=false
+                
+                # Update terminal.py
+                echo "Downloading terminal.py..."
+                if command -v wget &> /dev/null; then
+                    wget -q "$BASE_URL/terminal.py" -O "$ZDTT_DIR/terminal.py" 2>/dev/null || UPDATE_FAILED=true
+                elif command -v curl &> /dev/null; then
+                    curl -sSL "$BASE_URL/terminal.py" -o "$ZDTT_DIR/terminal.py" 2>/dev/null || UPDATE_FAILED=true
                 fi
+                
+                if [ "$UPDATE_FAILED" = true ]; then
+                    echo "✗ Failed to download terminal.py"
+                    exit 1
+                fi
+                echo "✓ terminal.py updated"
+                
+                # Update version.txt
+                echo "Downloading version.txt..."
+                if command -v wget &> /dev/null; then
+                    wget -q "$BASE_URL/version.txt" -O "$ZDTT_DIR/version.txt" 2>/dev/null || UPDATE_FAILED=true
+                elif command -v curl &> /dev/null; then
+                    curl -sSL "$BASE_URL/version.txt" -o "$ZDTT_DIR/version.txt" 2>/dev/null || UPDATE_FAILED=true
+                fi
+                
+                if [ "$UPDATE_FAILED" = true ]; then
+                    echo "✗ Failed to download version.txt"
+                    exit 1
+                fi
+                echo "✓ version.txt updated"
+                
+                # Set permissions
+                chmod +x "$ZDTT_DIR/terminal.py"
+                
+                echo ""
+                echo "==========================================="
+                echo "✓ Update complete!"
+                echo "==========================================="
+                echo ""
+                echo "ZDTT Terminal has been updated to v$REMOTE_VERSION"
+                echo ""
+                echo "Your settings are preserved:"
+                echo "  • Command history: ~/.zdtt_history"
+                echo "  • Aliases: ~/.zdtt/aliases"
+                echo "  • Plugins: ~/.zdtt/plugins/"
+                echo "  • Custom banner: ~/.zdtt/banner.txt"
+                echo ""
+                echo "Run 'zdtt start' to use the updated version."
             else
                 echo "Update cancelled."
             fi
