@@ -72,20 +72,52 @@ if [ -f "$BIN_DIR/zdtt" ] || [ -d "$INSTALL_DIR" ]; then
     esac
 fi
 
-# Check if running on Debian-based Linux
+# Check if running on a supported Linux distribution
 IS_DEBIAN=false
+IS_ARCH=false
+DETECTED_DISTRO="other"
+
+OS_ID=""
+OS_LIKE=""
+if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    OS_ID=$(echo "${ID:-}" | tr '[:upper:]' '[:lower:]')
+    OS_LIKE=$(echo "${ID_LIKE:-}" | tr '[:upper:]' '[:lower:]')
+fi
+
 if [ -f /etc/debian_version ]; then
     IS_DEBIAN=true
+    DETECTED_DISTRO="debian"
     echo -e "${GREEN}✓${NC} Debian-based Linux detected"
+elif [ -f /etc/arch-release ] || [ -f /etc/artix-release ]; then
+    IS_ARCH=true
+    DETECTED_DISTRO="arch"
+    echo -e "${GREEN}✓${NC} Arch Linux detected"
+elif [[ "$OS_ID" == "debian" || "$OS_ID" == "ubuntu" || "$OS_ID" == "linuxmint" || "$OS_ID" == "pop" || "$OS_ID" == "pop-os" || "$OS_ID" == "pop_os" || "$OS_ID" == "elementary" || "$OS_LIKE" == *"debian"* || "$OS_LIKE" == *"ubuntu"* ]]; then
+    IS_DEBIAN=true
+    DETECTED_DISTRO="debian"
+    echo -e "${GREEN}✓${NC} Debian-based Linux detected (via os-release)"
+elif [[ "$OS_ID" == "arch" || "$OS_ID" == "archlinux" || "$OS_ID" == "manjaro" || "$OS_ID" == "endeavouros" || "$OS_ID" == "endeavour" || "$OS_ID" == "arcolinux" || "$OS_ID" == "garuda" || "$OS_ID" == "artix" || "$OS_ID" == "blackarch" || "$OS_LIKE" == *"arch"* ]]; then
+    IS_ARCH=true
+    DETECTED_DISTRO="arch"
+    echo -e "${GREEN}✓${NC} Arch-based Linux detected (via os-release)"
+elif command -v apt-get &>/dev/null; then
+    IS_DEBIAN=true
+    DETECTED_DISTRO="debian"
+    echo -e "${GREEN}✓${NC} Debian-based Linux detected (via package manager)"
+elif command -v pacman &>/dev/null; then
+    IS_ARCH=true
+    DETECTED_DISTRO="arch"
+    echo -e "${GREEN}✓${NC} Arch-based Linux detected (via package manager)"
 else
-    echo -e "${YELLOW}⚠${NC}  Non-Debian distribution detected"
+    echo -e "${YELLOW}⚠${NC}  Unsupported distribution detected"
     echo ""
-    echo "ZDTT Terminal is optimized for Debian-based systems."
-    echo "(Debian, Ubuntu, Linux Mint, Pop!_OS, etc.)"
+    echo "ZDTT Terminal is optimized for Debian-based and Arch Linux systems."
     echo ""
-    echo "Running on a non-Debian system may result in:"
+    echo "Running on an unsupported system may result in:"
     echo "  • Some commands may not work as expected"
-    echo "  • Auto-install features (like neofetch) will not work"
+    echo "  • Auto-install features (like fastfetch) will not work"
     echo "  • Reduced plugin compatibility"
     echo "  • Package management commands unavailable"
     echo ""
@@ -99,6 +131,37 @@ else
         exit 0
     fi
 fi
+
+echo "Detected distribution: ${DETECTED_DISTRO}"
+read -p "Override detection? (debian/arch/other, Enter to keep): " -r USER_OVERRIDE
+USER_OVERRIDE=$(echo "$USER_OVERRIDE" | tr '[:upper:]' '[:lower:]')
+
+case "$USER_OVERRIDE" in
+    debian)
+        IS_DEBIAN=true
+        IS_ARCH=false
+        DETECTED_DISTRO="debian"
+        echo "Override applied: Debian-based system selected."
+        ;;
+    arch)
+        IS_DEBIAN=false
+        IS_ARCH=true
+        DETECTED_DISTRO="arch"
+        echo "Override applied: Arch-based system selected."
+        ;;
+    other)
+        IS_DEBIAN=false
+        IS_ARCH=false
+        DETECTED_DISTRO="other"
+        echo "Override applied: Unsupported/Other selected."
+        ;;
+    "")
+        echo "Keeping detected distribution."
+        ;;
+    *)
+        echo "Unknown override '$USER_OVERRIDE'. Keeping detected distribution."
+        ;;
+esac
 
 # Check if Python 3 is installed
 if ! command -v python3 &> /dev/null; then
@@ -122,10 +185,27 @@ if ! command -v python3 &> /dev/null; then
         fi
         
         echo -e "${GREEN}✓${NC} Python 3 installed successfully"
+    elif [ "$IS_ARCH" = true ]; then
+        echo "Installing Python 3..."
+        
+        # Sync package databases and install Python
+        sudo pacman -Sy --noconfirm python
+        
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to install Python 3${NC}"
+            echo "Please install Python 3 manually: sudo pacman -S python"
+            echo ""
+            echo "Press any key to exit..."
+            read -n 1 -s -r
+            exit 1
+        fi
+        
+        echo -e "${GREEN}✓${NC} Python 3 installed successfully"
     else
-        echo -e "${RED}Python 3 is required but auto-install is not supported on non-Debian systems.${NC}"
+        echo -e "${RED}Python 3 is required but auto-install is not supported on this distribution.${NC}"
         echo ""
         echo "Please install Python 3 manually using your package manager:"
+        echo "  • Debian/Ubuntu: sudo apt-get install python3"
         echo "  • Arch/Manjaro: sudo pacman -S python"
         echo "  • Fedora: sudo dnf install python3"
         echo "  • openSUSE: sudo zypper install python3"
@@ -435,4 +515,3 @@ echo "  zdtt start"
 echo ""
 echo "Press any key to exit..."
 read -n 1 -s -r
-

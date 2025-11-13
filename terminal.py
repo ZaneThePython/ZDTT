@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ZDTT Terminal - A custom terminal interface
-Only works on Debian-based Linux systems
+Only works on Debian-based or Arch Linux systems
 """
 
 import os
@@ -13,14 +13,147 @@ import readline
 import glob
 import atexit
 import logging
+import threading
+import json
 from datetime import datetime
 import urllib.request
 import urllib.error
 import time as time_module
 
 
+SUPPORTED_DEBIAN_IDS = {
+    'debian',
+    'ubuntu',
+    'linuxmint',
+    'mint',
+    'pop',
+    'pop-os',
+    'pop_os',
+    'elementary',
+    'zorin',
+    'kali',
+    'parrot',
+    'mx',
+    'mx-linux',
+    'deepin',
+    'peppermint',
+    'raspbian',
+    'neon',
+}
+
+SUPPORTED_ARCH_IDS = {
+    'arch',
+    'archlinux',
+    'manjaro',
+    'endeavouros',
+    'endeavour',
+    'arcolinux',
+    'garuda',
+    'artix',
+    'blackarch',
+    'chakra',
+}
+
+STATUS_BAR_COLORS = {
+    'blue': ('44', '97'),
+    'red': ('41', '97'),
+    'green': ('42', '30'),
+    'cyan': ('46', '30'),
+    'magenta': ('45', '97'),
+    'yellow': ('43', '30'),
+    'white': ('47', '30'),
+    'black': ('40', '97'),
+}
+
+
+def _parse_os_release():
+    """Return a dict of fields from /etc/os-release if available"""
+    data = {}
+    try:
+        with open('/etc/os-release', 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                value = value.strip().strip('"')
+                data[key] = value
+    except FileNotFoundError:
+        pass
+    return data
+
+
+def _collect_tokens(*values):
+    """Normalize distro identifiers for comparison"""
+    tokens = set()
+    for value in values:
+        if not value:
+            continue
+        normalized = value.replace('"', '').strip().lower()
+        if not normalized:
+            continue
+        # Keep the raw normalized value plus its dashed/underscored variants split
+        tokens.add(normalized)
+        delimiters_replaced = normalized.replace('-', ' ').replace('_', ' ')
+        for part in delimiters_replaced.split():
+            if part:
+                tokens.add(part)
+    return tokens
+
+
+def _detect_supported_distro():
+    """Return distro identifier: 'debian', 'arch', or 'other'"""
+    if os.path.exists('/etc/debian_version'):
+        return 'debian'
+    
+    arch_markers = (
+        '/etc/arch-release',
+        '/etc/artix-release',
+    )
+    if any(os.path.exists(path) for path in arch_markers):
+        return 'arch'
+    
+    os_release = _parse_os_release()
+    tokens = _collect_tokens(os_release.get('ID'), os_release.get('ID_LIKE'))
+    
+    if tokens & SUPPORTED_DEBIAN_IDS:
+        return 'debian'
+    if tokens & SUPPORTED_ARCH_IDS:
+        return 'arch'
+    
+    # Fallback to package manager detection
+    if shutil.which('apt-get'):
+        return 'debian'
+    if shutil.which('pacman'):
+        return 'arch'
+    
+    return 'other'
+
+
+def _prompt_distro_override(detected_distro):
+    """Allow user to override detected distro."""
+    label_map = {
+        'debian': "Debian-based",
+        'arch': "Arch-based",
+        'other': "Unsupported/Other",
+    }
+    print("=" * 60)
+    print(f"Detected distribution: {label_map.get(detected_distro, 'Unknown')}")
+    print("If this is incorrect, enter one of: debian / arch / other.")
+    print("Press Enter to accept the detected value.")
+    override = input("Override distribution (leave blank to keep): ").strip().lower()
+    
+    if override in ('debian', 'arch', 'other'):
+        return override
+    
+    if override:
+        print(f"Unknown override '{override}'. Using detected value.")
+    
+    return detected_distro
+
+
 def check_system_compatibility():
-    """Check system compatibility and warn if not Debian-based"""
+    """Detect supported distributions and warn when unsupported"""
     # Check if running on Linux
     if sys.platform != 'linux':
         print("=" * 60)
@@ -34,19 +167,21 @@ def check_system_compatibility():
         if response != 'yes':
             print("Installation cancelled.")
             sys.exit(0)
-        return False
+        return 'other'
     
-    # Check for Debian-specific file
-    if not os.path.exists('/etc/debian_version'):
+    # Detect supported distributions
+    distro = _detect_supported_distro()
+    
+    if distro not in ('debian', 'arch'):
+        # Unsupported distribution
         print("=" * 60)
-        print("⚠️  WARNING: Non-Debian Distribution Detected")
+        print("⚠️  WARNING: Unsupported Distribution Detected")
         print("=" * 60)
-        print("ZDTT Terminal is optimized for Debian-based systems.")
-        print("(Debian, Ubuntu, Linux Mint, Pop!_OS, etc.)")
+        print("ZDTT Terminal is optimized for Debian-based and Arch Linux systems.")
         print()
-        print("Running on a non-Debian system may result in:")
+        print("Running on your current system may result in:")
         print("  • Some commands may not work as expected")
-        print("  • Auto-install features (like neofetch) may fail")
+        print("  • Auto-install features may fail")
         print("  • Reduced plugin compatibility")
         print("  • Package management commands unavailable")
         print()
@@ -54,24 +189,32 @@ def check_system_compatibility():
         if response != 'yes':
             print("Installation cancelled.")
             sys.exit(0)
-        return False
     
-    # It's a Debian-based system
-    return True
+    # Offer override regardless of detection
+    distro = _prompt_distro_override(distro)
+    return distro
 
 
 class ZDTTTerminal:
-    def __init__(self, is_debian=True):
+    def __init__(self, distro='debian'):
         self.username = getpass.getuser()
         self.running = True
         self.current_dir = os.getcwd()
-        self.is_debian = is_debian
+        self.distro = distro
+        self.is_debian = distro == 'debian'
+        self.is_arch = distro == 'arch'
+        self.is_supported = self.is_debian or self.is_arch
         self.zdtt_dir = os.path.expanduser("~/.zdtt")
         self.history_file = os.path.expanduser("~/.zdtt_history")
         self.plugin_dir = os.path.join(self.zdtt_dir, "plugins")
         self.log_file = os.path.join(self.zdtt_dir, "plugin_errors.log")
         self.banner_file = os.path.join(self.zdtt_dir, "banner.txt")
         self.aliases_file = os.path.join(self.zdtt_dir, "aliases")
+        self.config_file = os.path.join(self.zdtt_dir, "config.json")
+        self.status_bar_color = 'blue'
+        self.status_bar_thread = None
+        self.status_bar_stop_event = threading.Event()
+        self.scroll_region_set = False
         
         # Setup logging for plugins
         self.setup_logging()
@@ -82,6 +225,9 @@ class ZDTTTerminal:
         
         # Read version from version.txt
         self.version = self.read_version()
+        
+        # Load user preferences (status bar color, etc.)
+        self.load_preferences()
         
         # ANSI color codes
         self.COLOR_RESET = '\033[0m'
@@ -103,13 +249,14 @@ class ZDTTTerminal:
             'unalias': self.cmd_unalias,
             'zps': self.cmd_zps,
             'time': self.cmd_time,
+            'statusbar': self.cmd_statusbar,
             # System commands
             'ls': self.cmd_ls,
             'pwd': self.cmd_pwd,
             'cd': self.cmd_cd,
             'cat': self.cmd_cat,
             'nano': self.cmd_nano,
-            'neofetch': self.cmd_neofetch,
+            'fastfetch': self.cmd_fastfetch,
             'mkdir': self.cmd_mkdir,
             'touch': self.cmd_touch,
             'rm': self.cmd_rm,
@@ -166,6 +313,31 @@ class ZDTTTerminal:
         # Fallback version if file not found
         return "0.0.1.a"
     
+    def load_preferences(self):
+        """Load user preferences such as status bar color."""
+        try:
+            with open(self.config_file, 'r') as f:
+                data = json.load(f)
+            self.status_bar_color = data.get('status_bar_color', self.status_bar_color)
+        except FileNotFoundError:
+            pass
+        except json.JSONDecodeError:
+            logging.warning("Preferences file is corrupted; using defaults.")
+    
+    def save_preferences(self):
+        """Persist user preferences."""
+        data = {}
+        try:
+            with open(self.config_file, 'r') as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            data = {}
+        
+        data['status_bar_color'] = self.status_bar_color
+        
+        with open(self.config_file, 'w') as f:
+            json.dump(data, f, indent=2)
+    
     def check_for_updates(self):
         """Check if a new version is available"""
         try:
@@ -186,19 +358,21 @@ class ZDTTTerminal:
     
     def display_banner(self):
         """Display the ZDTT ASCII art banner (or custom banner if available)"""
+        print()
+        
         # Check terminal size to see if banner will fit
         try:
             term_size = shutil.get_terminal_size()
             # Banner is 44 chars wide and 11 lines tall (including version)
-            # Add extra space for non-Debian warning if needed
-            min_height = 13 if not self.is_debian else 11
+            # Add extra space for compatibility warning if needed
+            min_height = 13 if not self.is_supported else 11
             min_width = 44
             
             if term_size.columns < min_width or term_size.lines < min_height:
                 # Terminal too small, skip banner and just show minimal header
                 print(f"ZDTT Terminal v{self.version}")
-                if not self.is_debian:
-                    print("⚠️  Non-Debian system - limited support")
+                if not self.is_supported:
+                    print("⚠️  Unsupported system - limited support")
                 print()
                 return
         except Exception:
@@ -214,8 +388,8 @@ class ZDTTTerminal:
                     if '{version}' in custom_banner:
                         custom_banner = custom_banner.replace('{version}', self.version)
                     print(custom_banner)
-                    # Show non-Debian warning
-                    if not self.is_debian:
+                    # Show warning for unsupported systems
+                    if not self.is_supported:
                         self._show_compatibility_warning()
                     return
             except Exception as e:
@@ -237,15 +411,104 @@ ZDTT Terminal v{self.version}
 """
         print(banner)
         
-        # Show non-Debian warning after banner
-        if not self.is_debian:
+        # Show warning for unsupported systems after banner
+        if not self.is_supported:
             self._show_compatibility_warning()
     
     def _show_compatibility_warning(self):
-        """Show compatibility warning for non-Debian systems"""
+        """Show compatibility warning for unsupported systems"""
+        if self.is_supported:
+            return
+        
         print()
-        print("⚠️  Running on non-Debian system - limited support")
+        print("⚠️  Running on unsupported system - limited support")
+        print("    Tested on Debian-based and Arch Linux distributions.")
         print()
+    
+    def initialize_status_bar(self):
+        """Reserve the first terminal row and start the status bar thread."""
+        self._set_scroll_region()
+        self._start_status_bar_thread()
+        self._render_status_bar()
+    
+    def shutdown_status_bar(self):
+        """Stop the status bar thread and release terminal state."""
+        self.status_bar_stop_event.set()
+        if self.status_bar_thread and self.status_bar_thread.is_alive():
+            self.status_bar_thread.join(timeout=0.5)
+        self.status_bar_thread = None
+        self._reset_scroll_region()
+    
+    def _start_status_bar_thread(self):
+        if self.status_bar_thread and self.status_bar_thread.is_alive():
+            return
+        self.status_bar_stop_event.clear()
+        self.status_bar_thread = threading.Thread(
+            target=self._status_bar_loop,
+            name="ZDTTStatusBar",
+            daemon=True,
+        )
+        self.status_bar_thread.start()
+    
+    def _status_bar_loop(self):
+        while not self.status_bar_stop_event.is_set():
+            self._render_status_bar()
+            if self.status_bar_stop_event.wait(2):
+                break
+    
+    def _render_status_bar(self):
+        """Render a single-line status bar with branding and time."""
+        bar_text = self._build_status_bar_text()
+        try:
+            sys.stdout.write("\033[s")          # Save cursor position
+            sys.stdout.write("\033[1;1H")       # Move to first row
+            sys.stdout.write("\033[2K")         # Clear the line
+            sys.stdout.write(bar_text)
+            sys.stdout.write(self.COLOR_RESET)
+            sys.stdout.write("\033[u")          # Restore cursor
+            sys.stdout.flush()
+        except Exception:
+            print(bar_text)
+    
+    def _build_status_bar_text(self):
+        left_text = "ZDTT by ZaneDev"
+        time_str = datetime.now().strftime("%I:%M:%p").lower()
+        try:
+            term_size = shutil.get_terminal_size()
+            width = max(term_size.columns, len(left_text) + len(time_str) + 4)
+        except Exception:
+            width = len(left_text) + len(time_str) + 4
+        
+        padding = max(width - len(left_text) - len(time_str) - 2, 1)
+        bar_plain = f" {left_text}{' ' * padding}{time_str} "
+        if len(bar_plain) < width:
+            bar_plain = bar_plain.ljust(width)
+        else:
+            bar_plain = bar_plain[:width]
+        bg_code, fg_code = STATUS_BAR_COLORS.get(self.status_bar_color, ('44', '97'))
+        return f"\033[{bg_code}m\033[{fg_code}m{bar_plain}"
+    
+    def _set_scroll_region(self):
+        """Reserve the top row for the status bar."""
+        try:
+            rows = shutil.get_terminal_size().lines
+            rows = max(rows, 2)
+            sys.stdout.write(f"\033[2;{rows}r")
+            sys.stdout.write("\033[1;1H")
+            sys.stdout.write("\033[2K")
+            sys.stdout.write("\033[2;1H")
+            sys.stdout.flush()
+            self.scroll_region_set = True
+        except Exception:
+            self.scroll_region_set = False
+    
+    def _reset_scroll_region(self):
+        """Restore default scrolling behavior."""
+        if not self.scroll_region_set:
+            return
+        sys.stdout.write("\033[r")
+        sys.stdout.flush()
+        self.scroll_region_set = False
     
     def setup_readline(self):
         """Setup readline for history and tab completion"""
@@ -441,6 +704,7 @@ ZDTT Terminal v{self.version}
         print("  unalias <name>       - Remove an alias")
         print("  zps install <url>    - Install plugin from URL")
         print("  time [options]       - Display date/time (MM/DD/YY 12h default)")
+        print("  statusbar color <name> - Change status bar highlight color")
         print("  exit                 - Exit ZDTT (return to shell)")
         print("  quit                 - Quit and close terminal window")
         print()
@@ -461,7 +725,7 @@ ZDTT Terminal v{self.version}
         print("  date                 - Display current date/time")
         print("  uname [options]      - Display system information")
         print("  nano <file>          - Edit file with nano")
-        print("  neofetch             - Display system info (auto-installs)")
+        print("  fastfetch            - Display system info (auto-installs)")
         print()
         print("Python Commands:")
         print("  python [args]        - Run Python interpreter")
@@ -479,6 +743,8 @@ ZDTT Terminal v{self.version}
     def cmd_clear(self, args):
         """Clear the terminal screen"""
         os.system('clear' if os.name != 'nt' else 'cls')
+        self._set_scroll_region()
+        self._render_status_bar()
         self.display_banner()
     
     def cmd_exit(self, args):
@@ -496,13 +762,15 @@ ZDTT Terminal v{self.version}
     def cmd_about(self, args):
         """Display information about ZDTT Terminal"""
         print(f"\nZDTT Terminal v{self.version}")
-        print("A custom terminal interface for Debian-based Linux")
+        print("A custom terminal interface for Debian-based and Arch Linux systems")
         
         # Show distribution status
         if self.is_debian:
             print("Running on: Debian-based system (fully supported)")
+        elif self.is_arch:
+            print("Running on: Arch Linux (fully supported)")
         else:
-            print("Running on: Non-Debian system (limited support)")
+            print("Running on: Unsupported system (limited support)")
         
         print()
         print("Features:")
@@ -815,6 +1083,35 @@ ZDTT Terminal v{self.version}
         
         print(f"{date_str} {time_str}")
     
+    def cmd_statusbar(self, args):
+        """Configure the status bar appearance."""
+        if not args:
+            print(f"Status bar color: {self.status_bar_color}")
+            print("Usage: statusbar color <color>")
+            print(f"Available colors: {', '.join(sorted(STATUS_BAR_COLORS.keys()))}")
+            return
+        
+        subcommand = args[0].lower()
+        if subcommand != 'color':
+            print("Unknown statusbar option. Usage: statusbar color <color>")
+            return
+        
+        if len(args) < 2:
+            print("Missing color. Usage: statusbar color <color>")
+            print(f"Available colors: {', '.join(sorted(STATUS_BAR_COLORS.keys()))}")
+            return
+        
+        color = args[1].lower()
+        if color not in STATUS_BAR_COLORS:
+            print(f"Unsupported color '{color}'.")
+            print(f"Available colors: {', '.join(sorted(STATUS_BAR_COLORS.keys()))}")
+            return
+        
+        self.status_bar_color = color
+        self.save_preferences()
+        self._render_status_bar()
+        print(f"Status bar color updated to {color}.")
+    
     def cmd_echo(self, args):
         """Echo the provided arguments"""
         if args:
@@ -1034,32 +1331,97 @@ ZDTT Terminal v{self.version}
         
         subprocess.run(['nano'] + args)
     
-    def cmd_neofetch(self, args):
-        """Display system info with neofetch (auto-installs if needed)"""
-        # Check if neofetch is installed
-        if not shutil.which('neofetch'):
-            if not self.is_debian:
-                print("neofetch is not installed.")
-                print("Auto-install is only supported on Debian-based systems.")
-                print("Please install neofetch manually using your package manager:")
-                print("  • Arch/Manjaro: sudo pacman -S neofetch")
-                print("  • Fedora: sudo dnf install neofetch")
-                print("  • openSUSE: sudo zypper install neofetch")
+    def cmd_fastfetch(self, args):
+        """Display system info with fastfetch (auto-installs if needed)"""
+        def _find_fastfetch_binary():
+            """Return absolute path to fastfetch if available."""
+            fastfetch_path = shutil.which('fastfetch')
+            if fastfetch_path:
+                return fastfetch_path
+            
+            # Fallback search in common locations
+            common_paths = [
+                '/usr/bin/fastfetch',
+                '/usr/local/bin/fastfetch',
+                os.path.expanduser('~/.local/bin/fastfetch'),
+            ]
+            for path in common_paths:
+                if os.path.isfile(path) and os.access(path, os.X_OK):
+                    return path
+            return None
+        
+        def _build_install_command():
+            """Return (cmd_list, manual_hint) based on distro/privileges."""
+            manual_hint = None
+            if self.is_debian:
+                base_cmd = ['apt-get', 'install', '-y', 'fastfetch']
+                manual_hint = "sudo apt-get install fastfetch"
+            elif self.is_arch:
+                base_cmd = ['pacman', '-S', '--noconfirm', 'fastfetch']
+                manual_hint = "sudo pacman -S fastfetch"
+            else:
+                return None, None
+            
+            # Determine if sudo is needed
+            geteuid = getattr(os, 'geteuid', None)
+            is_root = geteuid is not None and geteuid() == 0
+            sudo_path = shutil.which('sudo')
+            
+            if is_root:
+                return base_cmd, manual_hint
+            
+            if sudo_path:
+                return [sudo_path] + base_cmd, manual_hint
+            
+            # Cannot elevate automatically
+            return None, manual_hint
+        
+        # Check if fastfetch is installed
+        fastfetch_bin = _find_fastfetch_binary()
+        
+        if not fastfetch_bin:
+            if not self.is_supported:
+                print("fastfetch is not installed.")
+                print("Auto-install is only supported on Debian-based and Arch Linux systems.")
+                print("Please install fastfetch manually using your package manager:")
+                print("  • Debian/Ubuntu: sudo apt-get install fastfetch")
+                print("  • Arch/Manjaro: sudo pacman -S fastfetch")
+                print("  • Fedora: sudo dnf install fastfetch")
+                print("  • openSUSE: sudo zypper install fastfetch")
                 return
             
-            print("neofetch is not installed. Installing...")
+            install_cmd, manual_hint = _build_install_command()
+            if not install_cmd:
+                print("fastfetch is not installed and cannot be auto-installed because elevated privileges")
+                print("are required but 'sudo' was not found (or you're not running as root).")
+                if manual_hint:
+                    print(f"Try manually: {manual_hint}")
+                else:
+                    print("Please install fastfetch via your package manager.")
+                return
+            
+            print("fastfetch is not installed. Installing...")
             print()
             try:
-                subprocess.run(['sudo', 'apt-get', 'install', '-y', 'neofetch'], check=True)
+                subprocess.run(install_cmd, check=True)
                 print()
-                print("neofetch installed successfully!")
+                print("fastfetch installed successfully!")
                 print()
             except subprocess.CalledProcessError:
-                print("Failed to install neofetch")
-                print("Try manually: sudo apt-get install neofetch")
+                print("Failed to install fastfetch")
+                if manual_hint:
+                    print(f"Try manually: {manual_hint}")
+                else:
+                    print("Please install fastfetch via your package manager.")
                 return
         
-        subprocess.run(['neofetch'] + args)
+            fastfetch_bin = _find_fastfetch_binary()
+            if not fastfetch_bin:
+                print("fastfetch installation completed but binary was not found.")
+                print("Ensure fastfetch is in your PATH and try again.")
+                return
+        
+        subprocess.run([fastfetch_bin] + args)
     
     # Python Commands
     
@@ -1126,28 +1488,31 @@ ZDTT Terminal v{self.version}
         """Main terminal loop"""
         # Clear screen and display banner
         os.system('clear' if os.name != 'nt' else 'cls')
+        self.initialize_status_bar()
         self.display_banner()
         
         # Main command loop
-        while self.running:
-            try:
-                command = input(self.get_prompt())
-                self.execute_command(command)
-            except KeyboardInterrupt:
-                print("\nUse 'exit' to return to shell, or 'quit' to close the window.")
-            except EOFError:
-                print("\nGoodbye!")
-                break
+        try:
+            while self.running:
+                try:
+                    command = input(self.get_prompt())
+                    self.execute_command(command)
+                except KeyboardInterrupt:
+                    print("\nUse 'exit' to return to shell, or 'quit' to close the window.")
+                except EOFError:
+                    print("\nGoodbye!")
+                    break
+        finally:
+            self.shutdown_status_bar()
 
 
 def main():
     # Check system compatibility
-    is_debian = check_system_compatibility()
+    distro = check_system_compatibility()
     
-    terminal = ZDTTTerminal(is_debian=is_debian)
+    terminal = ZDTTTerminal(distro=distro)
     terminal.run()
 
 
 if __name__ == "__main__":
     main()
-

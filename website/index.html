@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZDTT Terminal</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="hero" id="top">
+    <nav class="nav">
+      <div class="brand">ZDTT</div>
+      <button class="nav__toggle" aria-label="Toggle navigation">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="nav__links">
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="#showcase">Showcase</a>
+        <a href="#community">Community</a>
+      </div>
+    </nav>
+
+    <div class="hero__content">
+      <p class="eyebrow">Linux-first terminal</p>
+      <h1>ZDTT Terminal</h1>
+      <p class="lead">
+        A vibe-coded, distro-aware terminal experience for Debian and Arch power users.
+        Smart onboarding, plugin support, custom aliases, and a living status bar—no fluff.
+      </p>
+      <div class="hero__actions">
+        <button class="btn primary" data-copy="#install-command">Copy Install Command</button>
+        <a class="btn ghost" href="#features">Explore Features</a>
+      </div>
+      <code id="install-command" class="install-command">
+        curl -O https://zdtt-sources.zane.org/install.sh && chmod +x install.sh && ./install.sh
+      </code>
+    </div>
+
+    <div class="hero__metrics">
+      <div class="metric">
+        <p class="metric__label">Current release</p>
+        <p class="metric__value">v0.1.2.a</p>
+      </div>
+      <div class="metric">
+        <p class="metric__label">Supported families</p>
+        <p class="metric__value">Debian · Arch</p>
+      </div>
+      <div class="metric">
+        <p class="metric__label">Extension slots</p>
+        <p class="metric__value">Plugins + Aliases</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="features" class="section features">
+      <div class="section__intro">
+        <p class="eyebrow">Why ZDTT</p>
+        <h2>Built for Linux hackers, tuned for comfort.</h2>
+        <p>ZDTT pairs a friendly onboarding story with serious tooling. No learning cliff, no silent failure when you hop distros.</p>
+      </div>
+      <div class="feature-grid">
+        <article class="card">
+          <h3>Smart distro detection</h3>
+          <p>Installer inspects <code>/etc/os-release</code>, package managers, and user overrides to keep Debian and Arch flows tight.</p>
+        </article>
+        <article class="card">
+          <h3>Always-on status bar</h3>
+          <p>Background thread renders a live status bar with branding, time, and color themes you can swap on the fly.</p>
+        </article>
+        <article class="card">
+          <h3>Plugin-friendly core</h3>
+          <p>Drop Python hooks inside <code>~/.zdtt/plugins</code>, log issues automatically, and iterate without touching core files.</p>
+        </article>
+        <article class="card">
+          <h3>Aliases that stick</h3>
+          <p>Readable aliases file, inline history, and tab-completion support so your favorite shortcuts load every launch.</p>
+        </article>
+        <article class="card">
+          <h3>Command batteries included</h3>
+          <p><code>ls</code>, <code>grep</code>, <code>fastfetch</code>, Python runners, package helpers, and more are wired in.</p>
+        </article>
+        <article class="card">
+          <h3>Graceful fallbacks</h3>
+          <p>Unsupported systems get friendly warnings, opt-in installs, and clear messaging so nothing breaks silently.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="install" class="section install">
+      <div class="section__intro">
+        <p class="eyebrow">3-step install</p>
+        <h2>From curl to custom shell in minutes.</h2>
+      </div>
+      <ol class="install-steps">
+        <li>
+          <h3>Fetch the installer</h3>
+          <p>Use the one-liner above or download <code>install.sh</code> directly if you want to inspect the script first.</p>
+        </li>
+        <li>
+          <h3>Follow the prompts</h3>
+          <p>The script checks your distro, offers overrides, and handles both Debian (<code>apt</code>) and Arch (<code>pacman</code>) flows.</p>
+        </li>
+        <li>
+          <h3>Launch <code>zdtt</code></h3>
+          <p>Run <code>zdtt</code> from any shell. Tweak banner art, status-bar colors, and drop plugins into <code>~/.zdtt</code>.</p>
+        </li>
+      </ol>
+      <div class="callout">
+        <p><strong>Heads up:</strong> ZDTT is Linux-only. Non-Debian/Arch installs can continue at your own risk—warnings are built in.</p>
+      </div>
+    </section>
+
+    <section id="showcase" class="section showcase">
+      <div class="section__intro">
+        <p class="eyebrow">Showcase</p>
+        <h2>Personality baked in.</h2>
+      </div>
+      <div class="showcase__grid">
+        <figure>
+          <figcaption>Custom ASCII banner system</figcaption>
+          <pre>
+░█████████ ░███████   ░██████████░██████████
+      ░██  ░██   ░██      ░██        ░██
+     ░██   ░██    ░██     ░██        ░██
+   ░███    ░██    ░██     ░██        ░██
+  ░██      ░██    ░██     ░██        ░██
+ ░██       ░██   ░██      ░██        ░██
+░█████████ ░███████       ░██        ░██
+          </pre>
+        </figure>
+        <figure>
+          <figcaption>Live status bar with themed colors</figcaption>
+          <div class="statusbar-demo">ZDTT by ZaneDev<span>10:24pm</span></div>
+        </figure>
+        <figure>
+          <figcaption>Plugin logging with guard rails</figcaption>
+          <pre>
+2024-01-02 21:41:07 ERROR my_plugin
+Traceback (most recent call last):
+  ...
+          </pre>
+        </figure>
+      </div>
+    </section>
+
+    <section id="community" class="section community">
+      <div class="section__intro">
+        <p class="eyebrow">Community</p>
+        <h2>Bring your tweaks, aliases, and plugins.</h2>
+        <p>ZDTT thrives on experimentation. Fork it, vibe with it, file PRs, or just send screenshots.</p>
+      </div>
+      <div class="community__actions">
+        <a class="btn primary" href="mailto:hello@zane.org">Say hello</a>
+        <a class="btn ghost" href="https://github.com/" target="_blank" rel="noreferrer">View source</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>© <span id="year"></span> ZDTT • Built for Debian + Arch explorers.</p>
+    <a href="#top">Back to top ↑</a>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
