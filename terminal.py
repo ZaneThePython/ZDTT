@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ZDTT Terminal - A custom terminal interface
-Supports Debian-based, Arch Linux, and macOS systems
+Only works on Debian-based or Arch Linux systems
 """
 
 import os
@@ -137,16 +137,15 @@ def _prompt_distro_override(detected_distro):
     label_map = {
         'debian': "Debian-based",
         'arch': "Arch-based",
-        'mac': "macOS",
         'other': "Unsupported/Other",
     }
     print("=" * 60)
     print(f"Detected distribution: {label_map.get(detected_distro, 'Unknown')}")
-    print("If this is incorrect, enter one of: debian / arch / mac / other.")
+    print("If this is incorrect, enter one of: debian / arch / other.")
     print("Press Enter to accept the detected value.")
     override = input("Override distribution (leave blank to keep): ").strip().lower()
     
-    if override in ('debian', 'arch', 'mac', 'other'):
+    if override in ('debian', 'arch', 'other'):
         return override
     
     if override:
@@ -162,7 +161,7 @@ def _load_saved_distro():
         with open(config_file, 'r') as f:
             data = json.load(f)
             saved_distro = data.get('distro')
-            if saved_distro in ('debian', 'arch', 'mac', 'other'):
+            if saved_distro in ('debian', 'arch', 'other'):
                 return saved_distro
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         pass
@@ -193,87 +192,10 @@ def check_system_compatibility():
         # Use saved preference, skip prompts
         return saved_distro
     
-    # Check if running on macOS
-    if sys.platform == 'darwin':
-        print("=" * 60)
-        print("✓ macOS Detected")
-        print("=" * 60)
-        print("ZDTT Terminal supports macOS with Homebrew package management.")
-        print("Some Linux-specific features may be limited.")
-        print()
-        
-        # Check if Homebrew is installed
-        brew_path = shutil.which('brew')
-        if not brew_path:
-            # Check common Homebrew installation paths
-            brew_paths = [
-                '/opt/homebrew/bin/brew',
-                '/usr/local/bin/brew',
-            ]
-            brew_path = None
-            for path in brew_paths:
-                if os.path.isfile(path) and os.access(path, os.X_OK):
-                    brew_path = path
-                    break
-            
-            if not brew_path:
-                print("Homebrew is not installed.")
-                print("Homebrew is required for package management on macOS.")
-                print()
-                response = input("Install Homebrew now? (yes/no): ").strip().lower()
-                if response == 'yes':
-                    print()
-                    print("Installing Homebrew...")
-                    print("This may take a few minutes.")
-                    print()
-                    try:
-                        # Run the official Homebrew installation script
-                        # Show output in real-time
-                        install_script = '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-                        result = subprocess.run(
-                            install_script,
-                            shell=True,
-                            check=True
-                        )
-                        print()
-                        print("✓ Homebrew installed successfully!")
-                        
-                        # Check if we need to add Homebrew to PATH (Apple Silicon Macs)
-                        # Homebrew installs to /opt/homebrew/bin on Apple Silicon
-                        if os.path.exists('/opt/homebrew/bin/brew') and '/opt/homebrew/bin' not in os.environ.get('PATH', ''):
-                            print()
-                            print("Note: You may need to add Homebrew to your PATH.")
-                            print("Add this line to your ~/.zshrc or ~/.bash_profile:")
-                            print('  eval "$(/opt/homebrew/bin/brew shellenv)"')
-                            print('Or run: eval "$(/opt/homebrew/bin/brew shellenv)" for this session')
-                            print()
-                        
-                        print()
-                    except subprocess.CalledProcessError:
-                        print()
-                        print("⚠️  Failed to install Homebrew automatically.")
-                        print("Please install Homebrew manually:")
-                        print("  /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
-                        print()
-                        response = input("Continue anyway? (yes/no): ").strip().lower()
-                        if response != 'yes':
-                            print("Installation cancelled.")
-                            sys.exit(0)
-                else:
-                    print()
-                    print("Homebrew installation skipped.")
-                    print("You can install it later with:")
-                    print("  /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
-                    print()
-        
-        distro = 'mac'
-        _save_distro_preference(distro)
-        return distro
-    
     # Check if running on Linux
     if sys.platform != 'linux':
         print("=" * 60)
-        print("⚠️  WARNING: ZDTT Terminal is designed for Linux and macOS systems")
+        print("⚠️  WARNING: ZDTT Terminal is designed for Linux systems")
         print(f"   Detected platform: {sys.platform}")
         print("=" * 60)
         print("ZDTT may not work correctly on your system.")
@@ -295,7 +217,7 @@ def check_system_compatibility():
         print("=" * 60)
         print("⚠️  WARNING: Unsupported Distribution Detected")
         print("=" * 60)
-        print("ZDTT Terminal is optimized for Debian-based, Arch Linux, and macOS systems.")
+        print("ZDTT Terminal is optimized for Debian-based and Arch Linux systems.")
         print()
         print("Running on your current system may result in:")
         print("  • Some commands may not work as expected")
@@ -325,8 +247,7 @@ class ZDTTTerminal:
         self.distro = distro
         self.is_debian = distro == 'debian'
         self.is_arch = distro == 'arch'
-        self.is_mac = distro == 'mac'
-        self.is_supported = self.is_debian or self.is_arch or self.is_mac
+        self.is_supported = self.is_debian or self.is_arch
         self.zdtt_dir = os.path.expanduser("~/.zdtt")
         self.history_file = os.path.expanduser("~/.zdtt_history")
         self.plugin_dir = os.path.join(self.zdtt_dir, "plugins")
@@ -600,7 +521,7 @@ ZDTT Terminal v{self.version}
         
         print()
         print("⚠️  Running on unsupported system - limited support")
-        print("    Tested on Debian-based, Arch Linux, and macOS systems.")
+        print("    Tested on Debian-based and Arch Linux distributions.")
         print()
     
     def initialize_status_bar(self):
@@ -1078,7 +999,7 @@ ZDTT Terminal v{self.version}
         print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}╚═══════════════════════════════════════════════════════════╝{self.COLOR_RESET}")
         print()
         print(f"  {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Version:{self.COLOR_RESET} {self.COLOR_BRIGHT_WHITE}v{self.version}{self.COLOR_RESET}")
-        print(f"  {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Description:{self.COLOR_RESET} A custom terminal interface for Debian-based, Arch Linux, and macOS systems")
+        print(f"  {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Description:{self.COLOR_RESET} A custom terminal interface for Debian-based and Arch Linux systems")
         print()
         
         # Show distribution status with colors
@@ -1087,8 +1008,6 @@ ZDTT Terminal v{self.version}
             print(f"    {self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} Debian-based system {self.COLOR_BRIGHT_GREEN}(fully supported){self.COLOR_RESET}")
         elif self.is_arch:
             print(f"    {self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} Arch Linux {self.COLOR_BRIGHT_GREEN}(fully supported){self.COLOR_RESET}")
-        elif self.is_mac:
-            print(f"    {self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} macOS {self.COLOR_BRIGHT_GREEN}(supported){self.COLOR_RESET}")
         else:
             print(f"    {self.COLOR_WARNING}⚠{self.COLOR_RESET} Unsupported system {self.COLOR_WARNING}(limited support){self.COLOR_RESET}")
         
@@ -1669,19 +1588,11 @@ ZDTT Terminal v{self.version}
             candidate = shutil.which(tool_name)
             if candidate:
                 return candidate
-            # Check common paths (Linux and macOS)
-            paths_to_check = [
+            for path in (
                 f"/usr/bin/{tool_name}",
                 f"/usr/local/bin/{tool_name}",
                 os.path.expanduser(f"~/.local/bin/{tool_name}"),
-            ]
-            # Add macOS Homebrew paths
-            if self.is_mac:
-                paths_to_check.extend([
-                    "/opt/homebrew/bin/{}".format(tool_name),
-                    "/usr/local/opt/{}/bin/{}".format(tool_name, tool_name),
-                ])
-            for path in paths_to_check:
+            ):
                 if os.path.isfile(path) and os.access(path, os.X_OK):
                     return path
             return None
@@ -1695,9 +1606,6 @@ ZDTT Terminal v{self.version}
             elif tool_name == 'neofetch' and self.is_debian:
                 base_cmd = ['apt-get', 'install', '-y', 'neofetch']
                 manual_hint = "sudo apt-get install neofetch"
-            elif tool_name == 'neofetch' and self.is_mac:
-                base_cmd = ['brew', 'install', 'neofetch']
-                manual_hint = "brew install neofetch"
             else:
                 return None, manual_hint
 
@@ -1707,13 +1615,13 @@ ZDTT Terminal v{self.version}
 
             if is_root:
                 return base_cmd, manual_hint
-            if sudo_path and not self.is_mac:
+            if sudo_path:
                 return [sudo_path] + base_cmd, manual_hint
-            return base_cmd, manual_hint
+            return None, manual_hint
 
-        tool_name = 'fastfetch' if self.is_arch else 'neofetch' if (self.is_debian or self.is_mac) else None
+        tool_name = 'fastfetch' if self.is_arch else 'neofetch' if self.is_debian else None
         if not tool_name:
-            print("sysfetch currently supports Debian-based, Arch-based, or macOS systems only.")
+            print("sysfetch currently supports Debian-based or Arch-based systems only.")
             return
 
         tool_bin = _find_tool_binary(tool_name)
@@ -1760,12 +1668,7 @@ ZDTT Terminal v{self.version}
             subprocess.run(['pip'] + args)
         else:
             print("pip: command not found")
-            if self.is_mac:
-                print("Try installing with: brew install python3")
-            elif self.is_debian:
-                print("Try installing with: sudo apt-get install python3-pip")
-            else:
-                print("Try installing via your package manager")
+            print("Try installing with: sudo apt-get install python3-pip")
     
     def cmd_pip3(self, args):
         """Run pip3 command"""
@@ -1773,12 +1676,7 @@ ZDTT Terminal v{self.version}
             subprocess.run(['pip3'] + args)
         else:
             print("pip3: command not found")
-            if self.is_mac:
-                print("Try installing with: brew install python3")
-            elif self.is_debian:
-                print("Try installing with: sudo apt-get install python3-pip")
-            else:
-                print("Try installing via your package manager")
+            print("Try installing with: sudo apt-get install python3-pip")
 
     def cmd_update(self, args):
         """Trigger the external updater shipping with ZDTT."""
