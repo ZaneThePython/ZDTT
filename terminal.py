@@ -15,6 +15,7 @@ import atexit
 import logging
 import threading
 import json
+import shlex
 from datetime import datetime
 import urllib.request
 import urllib.error
@@ -215,6 +216,8 @@ class ZDTTTerminal:
         self.status_bar_thread = None
         self.status_bar_stop_event = threading.Event()
         self.scroll_region_set = False
+        self.plugin_command_names = set()
+        self.update_check_thread = None
         
         # Setup logging for plugins
         self.setup_logging()
@@ -250,13 +253,14 @@ class ZDTTTerminal:
             'zps': self.cmd_zps,
             'time': self.cmd_time,
             'statusbar': self.cmd_statusbar,
+            'update': self.cmd_update,
             # System commands
             'ls': self.cmd_ls,
             'pwd': self.cmd_pwd,
             'cd': self.cmd_cd,
             'cat': self.cmd_cat,
             'nano': self.cmd_nano,
-            'fastfetch': self.cmd_fastfetch,
+            'sysfetch': self.cmd_sysfetch,
             'mkdir': self.cmd_mkdir,
             'touch': self.cmd_touch,
             'rm': self.cmd_rm,
@@ -279,8 +283,8 @@ class ZDTTTerminal:
         # Load plugins
         self.load_plugins()
         
-        # Check for updates (non-blocking)
-        self.check_for_updates()
+        # Kick off async update check
+        self.start_update_check()
     
     def setup_logging(self):
         """Setup logging for plugin errors"""
@@ -338,8 +342,19 @@ class ZDTTTerminal:
         with open(self.config_file, 'w') as f:
             json.dump(data, f, indent=2)
     
-    def check_for_updates(self):
-        """Check if a new version is available"""
+    def start_update_check(self):
+        """Start the background thread that checks for updates."""
+        if self.update_check_thread and self.update_check_thread.is_alive():
+            return
+        self.update_check_thread = threading.Thread(
+            target=self._check_for_updates,
+            name="ZDTTUpdateCheck",
+            daemon=True,
+        )
+        self.update_check_thread.start()
+
+    def _check_for_updates(self):
+        """Background worker that checks if a new version is available."""
         try:
             # Get remote version
             url = "https://zdtt-sources.zane.org/version.txt"
@@ -350,7 +365,7 @@ class ZDTTTerminal:
             if remote_version != self.version:
                 print()
                 print(f"🔔 Update available! Current: {self.version} → Latest: {remote_version}")
-                print("   Run 'zdtt update' to update")
+                print("   Run 'zdtt update' from your shell to update")
                 print()
         except Exception:
             # Silently fail if we can't check for updates
@@ -572,12 +587,12 @@ ZDTT Terminal v{self.version}
         if not os.path.exists(self.plugin_dir):
             os.makedirs(self.plugin_dir, exist_ok=True)
             return
-        
+
         # Look for Python files in the plugins directory
         plugin_files = glob.glob(os.path.join(self.plugin_dir, "*.py"))
         loaded_count = 0
         failed_count = 0
-        
+
         for plugin_file in plugin_files:
             try:
                 # Get plugin name
@@ -596,6 +611,7 @@ ZDTT Terminal v{self.version}
                     plugin_commands = plugin_namespace['register_commands']()
                     if isinstance(plugin_commands, dict):
                         self.commands.update(plugin_commands)
+                        self.plugin_command_names.update(plugin_commands.keys())
                         loaded_count += 1
                     else:
                         raise ValueError("register_commands() must return a dictionary")
@@ -611,6 +627,12 @@ ZDTT Terminal v{self.version}
         # Show brief status if there were failures
         if failed_count > 0:
             print(f"⚠ {failed_count} plugin(s) failed to load. Check ~/.zdtt/plugin_errors.log")
+
+    def unload_plugin_commands(self):
+        """Remove commands that originated from plugins."""
+        for cmd_name in list(self.plugin_command_names):
+            self.commands.pop(cmd_name, None)
+        self.plugin_command_names.clear()
     
     def load_aliases(self):
         """Load user-defined aliases from file"""
@@ -705,6 +727,7 @@ ZDTT Terminal v{self.version}
         print("  zps install <url>    - Install plugin from URL")
         print("  time [options]       - Display date/time (MM/DD/YY 12h default)")
         print("  statusbar color <name> - Change status bar highlight color")
+        print("  update               - Run the ZDTT updater helper")
         print("  exit                 - Exit ZDTT (return to shell)")
         print("  quit                 - Quit and close terminal window")
         print()
@@ -725,7 +748,7 @@ ZDTT Terminal v{self.version}
         print("  date                 - Display current date/time")
         print("  uname [options]      - Display system information")
         print("  nano <file>          - Edit file with nano")
-        print("  fastfetch            - Display system info (auto-installs)")
+        print("  sysfetch             - Display system info (prefers distro tools)")
         print()
         print("Python Commands:")
         print("  python [args]        - Run Python interpreter")
@@ -750,6 +773,7 @@ ZDTT Terminal v{self.version}
     def cmd_exit(self, args):
         """Exit ZDTT Terminal (returns to parent shell)"""
         print("Goodbye!")
+        os.system('clear' if os.name != 'nt' else 'cls')
         self.running = False
     
     def cmd_quit(self, args):
@@ -823,17 +847,8 @@ ZDTT Terminal v{self.version}
         # Check for reload subcommand
         if args and args[0] == 'reload':
             print("Reloading plugins...")
-            # Remove plugin commands from command dict
-            plugin_commands = []
-            for cmd_name, cmd_func in list(self.commands.items()):
-                # Check if it's not a built-in command (hacky but works)
-                if hasattr(cmd_func, '__self__') and cmd_func.__self__ != self:
-                    plugin_commands.append(cmd_name)
-            
-            for cmd in plugin_commands:
-                del self.commands[cmd]
-            
-            # Clear aliases to avoid conflicts
+            # Remove plugin commands and reload aliases to avoid conflicts
+            self.unload_plugin_commands()
             self.aliases.clear()
             self.load_aliases()
             
@@ -1213,7 +1228,9 @@ ZDTT Terminal v{self.version}
         
         for path in paths:
             try:
-                if os.path.isfile(path):
+                if os.path.islink(path):
+                    os.unlink(path)
+                elif os.path.isfile(path):
                     os.remove(path)
                 elif os.path.isdir(path):
                     if recursive:
@@ -1331,97 +1348,75 @@ ZDTT Terminal v{self.version}
         
         subprocess.run(['nano'] + args)
     
-    def cmd_fastfetch(self, args):
-        """Display system info with fastfetch (auto-installs if needed)"""
-        def _find_fastfetch_binary():
-            """Return absolute path to fastfetch if available."""
-            fastfetch_path = shutil.which('fastfetch')
-            if fastfetch_path:
-                return fastfetch_path
-            
-            # Fallback search in common locations
-            common_paths = [
-                '/usr/bin/fastfetch',
-                '/usr/local/bin/fastfetch',
-                os.path.expanduser('~/.local/bin/fastfetch'),
-            ]
-            for path in common_paths:
+    def cmd_sysfetch(self, args):
+        """Display system info using distro-preferred fetch tool."""
+        def _find_tool_binary(tool_name):
+            candidate = shutil.which(tool_name)
+            if candidate:
+                return candidate
+            for path in (
+                f"/usr/bin/{tool_name}",
+                f"/usr/local/bin/{tool_name}",
+                os.path.expanduser(f"~/.local/bin/{tool_name}"),
+            ):
                 if os.path.isfile(path) and os.access(path, os.X_OK):
                     return path
             return None
-        
-        def _build_install_command():
-            """Return (cmd_list, manual_hint) based on distro/privileges."""
+
+        def _build_install_command(tool_name):
             manual_hint = None
-            if self.is_debian:
-                base_cmd = ['apt-get', 'install', '-y', 'fastfetch']
-                manual_hint = "sudo apt-get install fastfetch"
-            elif self.is_arch:
+            base_cmd = None
+            if tool_name == 'fastfetch' and self.is_arch:
                 base_cmd = ['pacman', '-S', '--noconfirm', 'fastfetch']
                 manual_hint = "sudo pacman -S fastfetch"
+            elif tool_name == 'neofetch' and self.is_debian:
+                base_cmd = ['apt-get', 'install', '-y', 'neofetch']
+                manual_hint = "sudo apt-get install neofetch"
             else:
-                return None, None
-            
-            # Determine if sudo is needed
+                return None, manual_hint
+
             geteuid = getattr(os, 'geteuid', None)
             is_root = geteuid is not None and geteuid() == 0
             sudo_path = shutil.which('sudo')
-            
+
             if is_root:
                 return base_cmd, manual_hint
-            
             if sudo_path:
                 return [sudo_path] + base_cmd, manual_hint
-            
-            # Cannot elevate automatically
             return None, manual_hint
-        
-        # Check if fastfetch is installed
-        fastfetch_bin = _find_fastfetch_binary()
-        
-        if not fastfetch_bin:
-            if not self.is_supported:
-                print("fastfetch is not installed.")
-                print("Auto-install is only supported on Debian-based and Arch Linux systems.")
-                print("Please install fastfetch manually using your package manager:")
-                print("  • Debian/Ubuntu: sudo apt-get install fastfetch")
-                print("  • Arch/Manjaro: sudo pacman -S fastfetch")
-                print("  • Fedora: sudo dnf install fastfetch")
-                print("  • openSUSE: sudo zypper install fastfetch")
-                return
-            
-            install_cmd, manual_hint = _build_install_command()
-            if not install_cmd:
-                print("fastfetch is not installed and cannot be auto-installed because elevated privileges")
-                print("are required but 'sudo' was not found (or you're not running as root).")
-                if manual_hint:
-                    print(f"Try manually: {manual_hint}")
-                else:
-                    print("Please install fastfetch via your package manager.")
-                return
-            
-            print("fastfetch is not installed. Installing...")
-            print()
-            try:
-                subprocess.run(install_cmd, check=True)
+
+        tool_name = 'fastfetch' if self.is_arch else 'neofetch' if self.is_debian else None
+        if not tool_name:
+            print("sysfetch currently supports Debian-based or Arch-based systems only.")
+            return
+
+        tool_bin = _find_tool_binary(tool_name)
+        if not tool_bin:
+            install_cmd, manual_hint = _build_install_command(tool_name)
+            if install_cmd:
+                print(f"{tool_name} is not installed. Installing...")
                 print()
-                print("fastfetch installed successfully!")
-                print()
-            except subprocess.CalledProcessError:
-                print("Failed to install fastfetch")
-                if manual_hint:
-                    print(f"Try manually: {manual_hint}")
-                else:
-                    print("Please install fastfetch via your package manager.")
-                return
-        
-            fastfetch_bin = _find_fastfetch_binary()
-            if not fastfetch_bin:
-                print("fastfetch installation completed but binary was not found.")
-                print("Ensure fastfetch is in your PATH and try again.")
-                return
-        
-        subprocess.run([fastfetch_bin] + args)
+                try:
+                    subprocess.run(install_cmd, check=True)
+                    print()
+                    print(f"{tool_name} installed successfully!")
+                    print()
+                except subprocess.CalledProcessError:
+                    print(f"Failed to install {tool_name}")
+                    if manual_hint:
+                        print(f"Try manually: {manual_hint}")
+                    else:
+                        print("Please install the tool via your package manager.")
+            elif manual_hint:
+                print(manual_hint)
+            tool_bin = _find_tool_binary(tool_name)
+
+        if not tool_bin:
+            print(f"Unable to run {tool_name}. Install it manually and rerun sysfetch.")
+            return
+
+        subprocess.run([tool_bin] + args)
+        print(f"\n(sysfetch used {tool_name})\n")
     
     # Python Commands
     
@@ -1432,7 +1427,7 @@ ZDTT Terminal v{self.version}
     def cmd_python3(self, args):
         """Run python3 command"""
         subprocess.run(['python3'] + args)
-    
+
     def cmd_pip(self, args):
         """Run pip command"""
         if shutil.which('pip'):
@@ -1448,7 +1443,26 @@ ZDTT Terminal v{self.version}
         else:
             print("pip3: command not found")
             print("Try installing with: sudo apt-get install python3-pip")
-    
+
+    def cmd_update(self, args):
+        """Trigger the external updater shipping with ZDTT."""
+        zdtt_wrapper = shutil.which('zdtt')
+        installer_script = os.path.join(
+            os.path.expanduser("~/.local/share/zdtt"),
+            'install.sh'
+        )
+
+        if zdtt_wrapper:
+            subprocess.run([zdtt_wrapper, 'update'] + args)
+            return
+
+        if os.path.isfile(installer_script):
+            subprocess.run(['bash', installer_script, 'update'] + args)
+            return
+
+        print("Unable to locate the ZDTT updater.")
+        print("Re-run the installer script or use 'zdtt update' from your shell if available.")
+
     def execute_command(self, command_line):
         """Parse and execute a command"""
         if not command_line.strip():
@@ -1473,7 +1487,15 @@ ZDTT Terminal v{self.version}
                 print("No command specified with -oszdtt flag")
             return
         
-        parts = command_line.strip().split()
+        try:
+            parts = shlex.split(command_line)
+        except ValueError as exc:
+            print(f"parse error: {exc}")
+            return
+
+        if not parts:
+            return
+
         cmd = parts[0].lower()
         args = parts[1:] if len(parts) > 1 else []
         
