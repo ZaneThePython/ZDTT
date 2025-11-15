@@ -154,8 +154,44 @@ def _prompt_distro_override(detected_distro):
     return detected_distro
 
 
+def _load_saved_distro():
+    """Load saved distro preference from config file."""
+    config_file = os.path.expanduser("~/.zdtt/config.json")
+    try:
+        with open(config_file, 'r') as f:
+            data = json.load(f)
+            saved_distro = data.get('distro')
+            if saved_distro in ('debian', 'arch', 'other'):
+                return saved_distro
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+def _save_distro_preference(distro):
+    """Save distro preference to config file."""
+    config_file = os.path.expanduser("~/.zdtt/config.json")
+    os.makedirs(os.path.dirname(config_file), exist_ok=True)
+    
+    data = {}
+    try:
+        with open(config_file, 'r') as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
+    
+    data['distro'] = distro
+    
+    with open(config_file, 'w') as f:
+        json.dump(data, f, indent=2)
+
 def check_system_compatibility():
     """Detect supported distributions and warn when unsupported"""
+    # Check for saved distro preference first
+    saved_distro = _load_saved_distro()
+    if saved_distro:
+        # Use saved preference, skip prompts
+        return saved_distro
+    
     # Check if running on Linux
     if sys.platform != 'linux':
         print("=" * 60)
@@ -169,7 +205,9 @@ def check_system_compatibility():
         if response != 'yes':
             print("Installation cancelled.")
             sys.exit(0)
-        return 'other'
+        distro = 'other'
+        _save_distro_preference(distro)
+        return distro
     
     # Detect supported distributions
     distro = _detect_supported_distro()
@@ -194,6 +232,10 @@ def check_system_compatibility():
     
     # Offer override regardless of detection
     distro = _prompt_distro_override(distro)
+    
+    # Save the selected distro preference
+    _save_distro_preference(distro)
+    
     return distro
 
 
@@ -358,11 +400,12 @@ class ZDTTTerminal:
         return "0.0.1.a"
     
     def load_preferences(self):
-        """Load user preferences such as status bar color."""
+        """Load user preferences such as status bar color and distro."""
         try:
             with open(self.config_file, 'r') as f:
                 data = json.load(f)
             self.status_bar_color = data.get('status_bar_color', self.status_bar_color)
+            # Note: distro is loaded in check_system_compatibility before terminal init
         except FileNotFoundError:
             pass
         except json.JSONDecodeError:
@@ -378,6 +421,7 @@ class ZDTTTerminal:
             data = {}
         
         data['status_bar_color'] = self.status_bar_color
+        # Note: distro is saved in check_system_compatibility
         
         with open(self.config_file, 'w') as f:
             json.dump(data, f, indent=2)
