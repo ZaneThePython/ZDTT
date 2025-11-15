@@ -16,6 +16,7 @@ import logging
 import threading
 import json
 import shlex
+import signal
 from datetime import datetime
 import urllib.request
 import urllib.error
@@ -218,6 +219,7 @@ class ZDTTTerminal:
         self.scroll_region_set = False
         self.plugin_command_names = set()
         self.update_check_thread = None
+        self.resize_lock = threading.Lock()  # Lock for resize operations
         
         # Setup logging for plugins
         self.setup_logging()
@@ -232,12 +234,50 @@ class ZDTTTerminal:
         # Load user preferences (status bar color, etc.)
         self.load_preferences()
         
-        # ANSI color codes
+        # ANSI color codes - Enhanced palette
         self.COLOR_RESET = '\033[0m'
-        self.COLOR_GREEN = '\033[92m'
-        self.COLOR_BLUE = '\033[94m'
-        self.COLOR_CYAN = '\033[96m'
         self.COLOR_BOLD = '\033[1m'
+        self.COLOR_DIM = '\033[2m'
+        self.COLOR_ITALIC = '\033[3m'
+        
+        # Standard colors
+        self.COLOR_BLACK = '\033[30m'
+        self.COLOR_RED = '\033[31m'
+        self.COLOR_GREEN = '\033[32m'
+        self.COLOR_YELLOW = '\033[33m'
+        self.COLOR_BLUE = '\033[34m'
+        self.COLOR_MAGENTA = '\033[35m'
+        self.COLOR_CYAN = '\033[36m'
+        self.COLOR_WHITE = '\033[37m'
+        
+        # Bright colors
+        self.COLOR_BRIGHT_BLACK = '\033[90m'
+        self.COLOR_BRIGHT_RED = '\033[91m'
+        self.COLOR_BRIGHT_GREEN = '\033[92m'
+        self.COLOR_BRIGHT_YELLOW = '\033[93m'
+        self.COLOR_BRIGHT_BLUE = '\033[94m'
+        self.COLOR_BRIGHT_MAGENTA = '\033[95m'
+        self.COLOR_BRIGHT_CYAN = '\033[96m'
+        self.COLOR_BRIGHT_WHITE = '\033[97m'
+        
+        # Accent colors (using bright variants for better visibility)
+        self.COLOR_ACCENT = '\033[96m'  # Bright cyan
+        self.COLOR_ACCENT2 = '\033[94m'  # Bright blue
+        self.COLOR_SUCCESS = '\033[92m'  # Bright green
+        self.COLOR_WARNING = '\033[93m'  # Bright yellow
+        self.COLOR_ERROR = '\033[91m'    # Bright red
+        self.COLOR_INFO = '\033[96m'      # Bright cyan
+        
+        # Background colors
+        self.BG_BLACK = '\033[40m'
+        self.BG_RED = '\033[41m'
+        self.BG_GREEN = '\033[42m'
+        self.BG_YELLOW = '\033[43m'
+        self.BG_BLUE = '\033[44m'
+        self.BG_MAGENTA = '\033[45m'
+        self.BG_CYAN = '\033[46m'
+        self.BG_WHITE = '\033[47m'
+        self.BG_BRIGHT_CYAN = '\033[106m'
         
         self.commands = {
             'help': self.cmd_help,
@@ -473,35 +513,106 @@ ZDTT Terminal v{self.version}
     
     def _render_status_bar(self):
         """Render a single-line status bar with branding and time."""
-        bar_text = self._build_status_bar_text()
         try:
+            # Get terminal size first to ensure we don't write beyond bounds
+            try:
+                term_size = shutil.get_terminal_size()
+                max_width = term_size.columns
+            except Exception:
+                max_width = 80  # Fallback
+            
+            bar_text = self._build_status_bar_text()
+            
+            # Ensure bar_text doesn't exceed terminal width (safety check)
+            # Count visible characters (approximate - ANSI codes don't count)
+            # This is a rough check, but better than nothing
+            if len(bar_text) > max_width * 3:  # Allow for ANSI codes (rough estimate)
+                # Rebuild with safer width
+                bar_text = self._build_status_bar_text()
+            
             sys.stdout.write("\033[s")          # Save cursor position
-            sys.stdout.write("\033[1;1H")       # Move to first row
-            sys.stdout.write("\033[2K")         # Clear the line
+            sys.stdout.write("\033[1;1H")       # Move to first row, first column
+            sys.stdout.write("\033[2K")         # Clear the entire line
+            sys.stdout.write("\033[0m")         # Reset all attributes
             sys.stdout.write(bar_text)
-            sys.stdout.write(self.COLOR_RESET)
+            sys.stdout.write("\033[0m")         # Ensure reset at end
+            # Move cursor to end of line to prevent wrapping issues
+            sys.stdout.write(f"\033[{max_width}G")  # Move to column max_width
             sys.stdout.write("\033[u")          # Restore cursor
             sys.stdout.flush()
         except Exception:
-            print(bar_text)
+            # Fallback: just skip rendering if there's an error
+            pass
     
     def _build_status_bar_text(self):
-        left_text = "ZDTT by ZaneDev"
-        time_str = datetime.now().strftime("%I:%M:%p").lower()
-        try:
-            term_size = shutil.get_terminal_size()
-            width = max(term_size.columns, len(left_text) + len(time_str) + 4)
-        except Exception:
-            width = len(left_text) + len(time_str) + 4
+        """Render a single-line status bar with enhanced branding and time."""
+        left_text = f"{self.COLOR_BOLD}ZDTT{self.COLOR_RESET} by {self.COLOR_BOLD}ZaneDev{self.COLOR_RESET}"
+        time_str = datetime.now().strftime("%I:%M %p")
+        plain_left = "ZDTT by ZaneDev"
+        plain_time = time_str
         
-        padding = max(width - len(left_text) - len(time_str) - 2, 1)
-        bar_plain = f" {left_text}{' ' * padding}{time_str} "
-        if len(bar_plain) < width:
-            bar_plain = bar_plain.ljust(width)
+        try:
+            # Always get fresh terminal size to handle resizes
+            term_size = shutil.get_terminal_size()
+            width = term_size.columns
+            # Safety: ensure width is at least 1
+            width = max(1, width)
+        except Exception:
+            # Fallback to minimum width if we can't get terminal size
+            width = max(1, len(plain_left) + len(plain_time) + 6)
+        
+        # Calculate the minimum content width (plain text only, no ANSI codes)
+        # Format: " ZDTT by ZaneDev | TIME "
+        min_content_width = len(plain_left) + len(plain_time) + 5  # 5 = spaces + separator
+        
+        # Calculate padding to fill the line
+        if width < min_content_width:
+            # Terminal too narrow, use minimum padding
+            padding = 0
         else:
-            bar_plain = bar_plain[:width]
+            padding = width - min_content_width
+        
+        # Build the content (plain text calculation)
+        separator = f"{self.COLOR_DIM}│{self.COLOR_RESET}"
+        bar_content = f" {left_text} {' ' * padding}{separator} {self.COLOR_BRIGHT_WHITE}{time_str}{self.COLOR_RESET} "
+        
+        # Calculate actual display length (plain text only)
+        actual_display_len = len(plain_left) + len(plain_time) + padding + 5
+        
+        # Ensure we fill exactly to terminal width (but never exceed it)
+        if actual_display_len < width:
+            # Add trailing spaces to fill exactly to width
+            trailing_spaces = width - actual_display_len
+            bar_content = bar_content.rstrip() + ' ' * trailing_spaces
+        elif actual_display_len > width:
+            # We exceeded width, recalculate with less padding
+            padding = max(0, width - min_content_width)
+            bar_content = f" {left_text} {' ' * padding}{separator} {self.COLOR_BRIGHT_WHITE}{time_str}{self.COLOR_RESET} "
+            actual_display_len = len(plain_left) + len(plain_time) + padding + 5
+            if actual_display_len < width:
+                trailing_spaces = width - actual_display_len
+                bar_content = bar_content.rstrip() + ' ' * trailing_spaces
+            else:
+                # Still too wide, trim the time if necessary
+                if width < len(plain_left) + 10:
+                    # Very narrow terminal, just show minimal content
+                    bar_content = f" {left_text} {separator} {self.COLOR_BRIGHT_WHITE}{time_str[:8]}{self.COLOR_RESET} "
+                    bar_content = bar_content[:width] if len(bar_content) > width else bar_content
+        
+        # Final safety check: ensure we never exceed terminal width
+        # This is approximate since ANSI codes don't count, but better than nothing
         bg_code, fg_code = STATUS_BAR_COLORS.get(self.status_bar_color, ('44', '97'))
-        return f"\033[{bg_code}m\033[{fg_code}m{bar_plain}"
+        result = f"\033[{bg_code}m\033[{fg_code}m{bar_content}\033[0m"
+        
+        # If the result is suspiciously long, truncate it
+        # (rough heuristic: ANSI codes add ~30-50 chars, so if result > width*2, it's probably wrong)
+        if len(result) > width * 2:
+            # Emergency fallback: simple status bar
+            simple_bar = f" ZDTT by ZaneDev | {time_str} "
+            simple_bar = simple_bar[:width] if len(simple_bar) > width else simple_bar.ljust(width)
+            result = f"\033[{bg_code}m\033[{fg_code}m{simple_bar}\033[0m"
+        
+        return result
     
     def _set_scroll_region(self):
         """Reserve the top row for the status bar."""
@@ -524,6 +635,50 @@ ZDTT Terminal v{self.version}
         sys.stdout.write("\033[r")
         sys.stdout.flush()
         self.scroll_region_set = False
+    
+    def _handle_resize(self, signum=None, frame=None):
+        """Handle terminal resize event (SIGWINCH)."""
+        # Use a lock to prevent race conditions
+        if not self.resize_lock.acquire(blocking=False):
+            # If we can't acquire the lock immediately, skip this resize
+            # (another resize is already being handled)
+            return
+        
+        try:
+            # Small delay to let terminal settle after resize
+            time_module.sleep(0.05)
+            
+            # Reset scroll region first to clear any corrupted state
+            self._reset_scroll_region()
+            
+            # Update scroll region with new terminal size
+            self._set_scroll_region()
+            
+            # Clear the status bar line completely before redrawing
+            try:
+                sys.stdout.write("\033[1;1H")       # Move to first row
+                sys.stdout.write("\033[2K")         # Clear the entire line
+                sys.stdout.write("\033[0m")       # Reset attributes
+                sys.stdout.flush()
+            except Exception:
+                pass
+            
+            # Force immediate status bar refresh
+            self._render_status_bar()
+            
+            # Ensure cursor is in a safe position
+            try:
+                term_size = shutil.get_terminal_size()
+                sys.stdout.write(f"\033[{term_size.lines};1H")  # Move to last line, first column
+                sys.stdout.flush()
+            except Exception:
+                pass
+                
+        except Exception:
+            # Silently fail if resize handling fails
+            pass
+        finally:
+            self.resize_lock.release()
     
     def setup_readline(self):
         """Setup readline for history and tab completion"""
@@ -626,7 +781,7 @@ ZDTT Terminal v{self.version}
         
         # Show brief status if there were failures
         if failed_count > 0:
-            print(f"⚠ {failed_count} plugin(s) failed to load. Check ~/.zdtt/plugin_errors.log")
+            print(f"{self.COLOR_WARNING}⚠ {failed_count} plugin(s) failed to load. Check ~/.zdtt/plugin_errors.log{self.COLOR_RESET}")
 
     def unload_plugin_commands(self):
         """Remove commands that originated from plugins."""
@@ -668,7 +823,7 @@ ZDTT Terminal v{self.version}
                     f.write(f"{name}={command}\n")
         except Exception as e:
             logging.error(f"Failed to save aliases: {e}")
-            print(f"Error: Failed to save aliases: {e}")
+            print(f"{self.COLOR_ERROR}Error: Failed to save aliases: {e}{self.COLOR_RESET}")
     
     def expand_aliases(self, command_line):
         """Expand aliases in command line"""
@@ -689,7 +844,7 @@ ZDTT Terminal v{self.version}
         return command_line
     
     def get_prompt(self):
-        """Return the custom prompt string with colors"""
+        """Return the custom prompt string with enhanced colors"""
         # Show current directory in prompt
         cwd = os.getcwd()
         # Show ~ for home directory
@@ -704,63 +859,72 @@ ZDTT Terminal v{self.version}
         RL_PROMPT_START = '\001'
         RL_PROMPT_END = '\002'
         
-        # Create colorized prompt with readline-safe escape codes
-        # [username in green @ ZDTT path in blue]=>
-        prompt = (f"[{RL_PROMPT_START}{self.COLOR_GREEN}{RL_PROMPT_END}{self.username}"
+        # Create enhanced colorized prompt with gradient-like effect
+        # [username in bright green @ ZDTT in bright cyan path in bright blue]=>
+        prompt = (f"{RL_PROMPT_START}{self.COLOR_BRIGHT_CYAN}{RL_PROMPT_END}┌─{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END}"
+                 f"[{RL_PROMPT_START}{self.COLOR_BRIGHT_GREEN}{RL_PROMPT_END}{self.username}"
                  f"{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END}"
-                 f"@{RL_PROMPT_START}{self.COLOR_CYAN}{RL_PROMPT_END}ZDTT{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END} "
-                 f"{RL_PROMPT_START}{self.COLOR_BLUE}{RL_PROMPT_END}{display_path}"
-                 f"{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END}]=> ")
+                 f"{RL_PROMPT_START}{self.COLOR_BRIGHT_WHITE}{RL_PROMPT_END}@{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END}"
+                 f"{RL_PROMPT_START}{self.COLOR_BRIGHT_CYAN}{RL_PROMPT_END}ZDTT{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END} "
+                 f"{RL_PROMPT_START}{self.COLOR_BRIGHT_BLUE}{RL_PROMPT_END}{display_path}"
+                 f"{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END}]"
+                 f"{RL_PROMPT_START}{self.COLOR_BRIGHT_CYAN}{RL_PROMPT_END}─{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END}\n"
+                 f"{RL_PROMPT_START}{self.COLOR_BRIGHT_CYAN}{RL_PROMPT_END}└─{RL_PROMPT_START}{self.COLOR_BRIGHT_MAGENTA}{RL_PROMPT_END}➜{RL_PROMPT_START}{self.COLOR_RESET}{RL_PROMPT_END} ")
         return prompt
     
     def cmd_help(self, args):
-        """Display available commands"""
-        print("\nZDTT Terminal Commands:")
-        print("  help                 - Display this help message")
-        print("  clear                - Clear the screen")
-        print("  echo <message>       - Echo a message")
-        print("  about                - About ZDTT Terminal")
-        print("  history              - Show command history")
-        print("  plugins [reload]     - List or reload plugins")
-        print("  alias [name=cmd]     - Create or display command aliases")
-        print("  unalias <name>       - Remove an alias")
-        print("  zps install <url>    - Install plugin from URL")
-        print("  time [options]       - Display date/time (MM/DD/YY 12h default)")
-        print("  statusbar color <name> - Change status bar highlight color")
-        print("  update               - Run the ZDTT updater helper")
-        print("  exit                 - Exit ZDTT (return to shell)")
-        print("  quit                 - Quit and close terminal window")
+        """Display available commands with enhanced formatting"""
         print()
-        print("File System Commands:")
-        print("  ls [options]         - List directory contents")
-        print("  pwd                  - Print working directory")
-        print("  cd <directory>       - Change directory")
-        print("  cat <file>           - Display file contents")
-        print("  mkdir <directory>    - Create directory")
-        print("  touch <file>         - Create empty file")
-        print("  rm [-rf] <file>      - Remove file/directory (prompts without -f)")
-        print("  mv <src> <dest>      - Move/rename file")
-        print("  cp [-r] <src> <dest> - Copy file")
-        print("  grep <pattern> <file> - Search for pattern in file")
+        print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}╔═══════════════════════════════════════════════════════════╗{self.COLOR_RESET}")
+        print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}║{self.COLOR_RESET}  {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}ZDTT Terminal Commands{self.COLOR_RESET}                                    {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}║{self.COLOR_RESET}")
+        print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}╚═══════════════════════════════════════════════════════════╝{self.COLOR_RESET}")
         print()
-        print("System Commands:")
-        print("  whoami               - Display current user")
-        print("  date                 - Display current date/time")
-        print("  uname [options]      - Display system information")
-        print("  nano <file>          - Edit file with nano")
-        print("  sysfetch             - Display system info (prefers distro tools)")
+        print(f"{self.COLOR_BRIGHT_MAGENTA}{self.COLOR_BOLD}Core Commands:{self.COLOR_RESET}")
+        print(f"  {self.COLOR_BRIGHT_GREEN}help{self.COLOR_RESET}                 - Display this help message")
+        print(f"  {self.COLOR_BRIGHT_GREEN}clear{self.COLOR_RESET}                - Clear the screen")
+        print(f"  {self.COLOR_BRIGHT_GREEN}echo{self.COLOR_RESET} <message>       - Echo a message")
+        print(f"  {self.COLOR_BRIGHT_GREEN}about{self.COLOR_RESET}                - About ZDTT Terminal")
+        print(f"  {self.COLOR_BRIGHT_GREEN}history{self.COLOR_RESET}              - Show command history")
+        print(f"  {self.COLOR_BRIGHT_GREEN}plugins{self.COLOR_RESET} [reload]     - List or reload plugins")
+        print(f"  {self.COLOR_BRIGHT_GREEN}alias{self.COLOR_RESET} [name=cmd]     - Create or display command aliases")
+        print(f"  {self.COLOR_BRIGHT_GREEN}unalias{self.COLOR_RESET} <name>       - Remove an alias")
+        print(f"  {self.COLOR_BRIGHT_GREEN}zps{self.COLOR_RESET} install <url>    - Install plugin from URL")
+        print(f"  {self.COLOR_BRIGHT_GREEN}time{self.COLOR_RESET} [options]       - Display date/time (MM/DD/YY 12h default)")
+        print(f"  {self.COLOR_BRIGHT_GREEN}statusbar{self.COLOR_RESET} color <name> - Change status bar highlight color")
+        print(f"  {self.COLOR_BRIGHT_GREEN}update{self.COLOR_RESET}               - Run the ZDTT updater helper")
+        print(f"  {self.COLOR_BRIGHT_GREEN}exit{self.COLOR_RESET}                 - Exit ZDTT (return to shell)")
+        print(f"  {self.COLOR_BRIGHT_GREEN}quit{self.COLOR_RESET}                 - Quit and close terminal window")
         print()
-        print("Python Commands:")
-        print("  python [args]        - Run Python interpreter")
-        print("  python3 [args]       - Run Python 3 interpreter")
-        print("  pip [args]           - Run pip package manager")
-        print("  pip3 [args]          - Run pip3 package manager")
+        print(f"{self.COLOR_BRIGHT_MAGENTA}{self.COLOR_BOLD}File System Commands:{self.COLOR_RESET}")
+        print(f"  {self.COLOR_BRIGHT_GREEN}ls{self.COLOR_RESET} [options]         - List directory contents")
+        print(f"  {self.COLOR_BRIGHT_GREEN}pwd{self.COLOR_RESET}                  - Print working directory")
+        print(f"  {self.COLOR_BRIGHT_GREEN}cd{self.COLOR_RESET} <directory>       - Change directory")
+        print(f"  {self.COLOR_BRIGHT_GREEN}cat{self.COLOR_RESET} <file>           - Display file contents")
+        print(f"  {self.COLOR_BRIGHT_GREEN}mkdir{self.COLOR_RESET} <directory>    - Create directory")
+        print(f"  {self.COLOR_BRIGHT_GREEN}touch{self.COLOR_RESET} <file>         - Create empty file")
+        print(f"  {self.COLOR_BRIGHT_GREEN}rm{self.COLOR_RESET} [-rf] <file>      - Remove file/directory (prompts without -f)")
+        print(f"  {self.COLOR_BRIGHT_GREEN}mv{self.COLOR_RESET} <src> <dest>      - Move/rename file")
+        print(f"  {self.COLOR_BRIGHT_GREEN}cp{self.COLOR_RESET} [-r] <src> <dest> - Copy file")
+        print(f"  {self.COLOR_BRIGHT_GREEN}grep{self.COLOR_RESET} <pattern> <file> - Search for pattern in file")
         print()
-        print("Features:")
-        print("  ↑/↓ arrows           - Navigate command history")
-        print("  Tab                  - Auto-complete commands/files")
-        print("  -oszdtt flag         - Run any command in system shell")
-        print("                         Example: htop -oszdtt")
+        print(f"{self.COLOR_BRIGHT_MAGENTA}{self.COLOR_BOLD}System Commands:{self.COLOR_RESET}")
+        print(f"  {self.COLOR_BRIGHT_GREEN}whoami{self.COLOR_RESET}               - Display current user")
+        print(f"  {self.COLOR_BRIGHT_GREEN}date{self.COLOR_RESET}                 - Display current date/time")
+        print(f"  {self.COLOR_BRIGHT_GREEN}uname{self.COLOR_RESET} [options]      - Display system information")
+        print(f"  {self.COLOR_BRIGHT_GREEN}nano{self.COLOR_RESET} <file>          - Edit file with nano")
+        print(f"  {self.COLOR_BRIGHT_GREEN}sysfetch{self.COLOR_RESET}             - Display system info (prefers distro tools)")
+        print()
+        print(f"{self.COLOR_BRIGHT_MAGENTA}{self.COLOR_BOLD}Python Commands:{self.COLOR_RESET}")
+        print(f"  {self.COLOR_BRIGHT_GREEN}python{self.COLOR_RESET} [args]        - Run Python interpreter")
+        print(f"  {self.COLOR_BRIGHT_GREEN}python3{self.COLOR_RESET} [args]       - Run Python 3 interpreter")
+        print(f"  {self.COLOR_BRIGHT_GREEN}pip{self.COLOR_RESET} [args]           - Run pip package manager")
+        print(f"  {self.COLOR_BRIGHT_GREEN}pip3{self.COLOR_RESET} [args]          - Run pip3 package manager")
+        print()
+        print(f"{self.COLOR_BRIGHT_MAGENTA}{self.COLOR_BOLD}Features:{self.COLOR_RESET}")
+        print(f"  {self.COLOR_BRIGHT_YELLOW}↑/↓ arrows{self.COLOR_RESET}           - Navigate command history")
+        print(f"  {self.COLOR_BRIGHT_YELLOW}Tab{self.COLOR_RESET}                  - Auto-complete commands/files")
+        print(f"  {self.COLOR_BRIGHT_YELLOW}-oszdtt flag{self.COLOR_RESET}         - Run any command in system shell")
+        print(f"                         {self.COLOR_DIM}Example: htop -oszdtt{self.COLOR_RESET}")
         print()
     
     def cmd_clear(self, args):
@@ -784,48 +948,55 @@ ZDTT Terminal v{self.version}
         sys.exit(0)
     
     def cmd_about(self, args):
-        """Display information about ZDTT Terminal"""
-        print(f"\nZDTT Terminal v{self.version}")
-        print("A custom terminal interface for Debian-based and Arch Linux systems")
+        """Display information about ZDTT Terminal with enhanced formatting"""
+        print()
+        print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}╔═══════════════════════════════════════════════════════════╗{self.COLOR_RESET}")
+        print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}║{self.COLOR_RESET}  {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}About ZDTT Terminal{self.COLOR_RESET}                                        {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}║{self.COLOR_RESET}")
+        print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}╚═══════════════════════════════════════════════════════════╝{self.COLOR_RESET}")
+        print()
+        print(f"  {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Version:{self.COLOR_RESET} {self.COLOR_BRIGHT_WHITE}v{self.version}{self.COLOR_RESET}")
+        print(f"  {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Description:{self.COLOR_RESET} A custom terminal interface for Debian-based and Arch Linux systems")
+        print()
         
-        # Show distribution status
+        # Show distribution status with colors
+        print(f"  {self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}System Status:{self.COLOR_RESET}")
         if self.is_debian:
-            print("Running on: Debian-based system (fully supported)")
+            print(f"    {self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} Debian-based system {self.COLOR_BRIGHT_GREEN}(fully supported){self.COLOR_RESET}")
         elif self.is_arch:
-            print("Running on: Arch Linux (fully supported)")
+            print(f"    {self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} Arch Linux {self.COLOR_BRIGHT_GREEN}(fully supported){self.COLOR_RESET}")
         else:
-            print("Running on: Unsupported system (limited support)")
+            print(f"    {self.COLOR_WARNING}⚠{self.COLOR_RESET} Unsupported system {self.COLOR_WARNING}(limited support){self.COLOR_RESET}")
         
         print()
-        print("Features:")
-        print("  • Automatic update checking on startup")
-        print("  • Command history with ↑/↓ navigation (1000 commands)")
-        print("  • Tab completion for commands and files")
-        print("  • Command aliases (alias g=git)")
-        print("  • Flexible time/date display with multiple formats")
-        print("  • Colorized prompt")
-        print("  • Smart banner (auto-hides on small terminals)")
-        print("  • Plugin system with ZPS package manager")
-        print("  • Plugin hot-reload (plugins reload)")
-        print("  • Safe rm with confirmation prompts")
-        print("  • Custom banner support (~/.zdtt/banner.txt)")
-        print("  • Native command support")
-        print("  • System command execution via -oszdtt flag")
-        print("  • Clean, premium interface")
+        print(f"  {self.COLOR_BRIGHT_MAGENTA}{self.COLOR_BOLD}Features:{self.COLOR_RESET}")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Automatic update checking on startup")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Command history with ↑/↓ navigation (1000 commands)")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Tab completion for commands and files")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Command aliases (alias g=git)")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Flexible time/date display with multiple formats")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Colorized prompt with enhanced styling")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Smart banner (auto-hides on small terminals)")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Plugin system with ZPS package manager")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Plugin hot-reload (plugins reload)")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Safe rm with confirmation prompts")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Custom banner support (~/.zdtt/banner.txt)")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Native command support")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} System command execution via -oszdtt flag")
+        print(f"    {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} Clean, premium interface")
         print()
-        print("Configuration:")
-        print(f"  • ZDTT directory: {self.zdtt_dir}")
-        print(f"  • Aliases: {self.aliases_file}")
-        print(f"  • Custom banner: {self.banner_file}")
-        print(f"  • Plugin errors: {self.log_file}")
+        print(f"  {self.COLOR_BRIGHT_MAGENTA}{self.COLOR_BOLD}Configuration:{self.COLOR_RESET}")
+        print(f"    {self.COLOR_DIM}•{self.COLOR_RESET} ZDTT directory: {self.COLOR_BRIGHT_CYAN}{self.zdtt_dir}{self.COLOR_RESET}")
+        print(f"    {self.COLOR_DIM}•{self.COLOR_RESET} Aliases: {self.COLOR_BRIGHT_CYAN}{self.aliases_file}{self.COLOR_RESET}")
+        print(f"    {self.COLOR_DIM}•{self.COLOR_RESET} Custom banner: {self.COLOR_BRIGHT_CYAN}{self.banner_file}{self.COLOR_RESET}")
+        print(f"    {self.COLOR_DIM}•{self.COLOR_RESET} Plugin errors: {self.COLOR_BRIGHT_CYAN}{self.log_file}{self.COLOR_RESET}")
         print()
     
     def cmd_history(self, args):
-        """Display command history"""
+        """Display command history with enhanced formatting"""
         history_length = readline.get_current_history_length()
         
         if history_length == 0:
-            print("No history available")
+            print(f"{self.COLOR_WARNING}No history available{self.COLOR_RESET}")
             return
         
         # Show last 50 commands by default
@@ -836,17 +1007,20 @@ ZDTT Terminal v{self.version}
         start = max(1, history_length - limit + 1)
         
         print()
+        print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Command History:{self.COLOR_RESET} (showing {limit} of {history_length} commands)")
+        print(f"{self.COLOR_DIM}{'─' * 60}{self.COLOR_RESET}")
         for i in range(start, history_length + 1):
             cmd = readline.get_history_item(i)
             if cmd:
-                print(f"{i:4d}  {cmd}")
+                print(f"{self.COLOR_BRIGHT_BLACK}{i:4d}{self.COLOR_RESET}  {self.COLOR_BRIGHT_CYAN}{cmd}{self.COLOR_RESET}")
+        print(f"{self.COLOR_DIM}{'─' * 60}{self.COLOR_RESET}")
         print()
     
     def cmd_plugins(self, args):
         """List or reload plugins"""
         # Check for reload subcommand
         if args and args[0] == 'reload':
-            print("Reloading plugins...")
+            print(f"{self.COLOR_BRIGHT_CYAN}Reloading plugins...{self.COLOR_RESET}")
             # Remove plugin commands and reload aliases to avoid conflicts
             self.unload_plugin_commands()
             self.aliases.clear()
@@ -854,7 +1028,7 @@ ZDTT Terminal v{self.version}
             
             # Reload plugins
             self.load_plugins()
-            print("✓ Plugins reloaded successfully!")
+            print(f"{self.COLOR_BRIGHT_GREEN}✓ Plugins reloaded successfully!{self.COLOR_RESET}")
             print()
             return
         
@@ -862,24 +1036,33 @@ ZDTT Terminal v{self.version}
         plugin_files = glob.glob(os.path.join(self.plugin_dir, "*.py"))
         
         if not plugin_files:
-            print("\nNo plugins installed.")
-            print(f"Plugin directory: {self.plugin_dir}")
-            print("\nTo create a plugin, create a .py file with a register_commands() function")
-            print("that returns a dictionary of command names to functions.")
-            print("\nOr use: zps install <url> to install from a URL")
+            print()
+            print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Plugins:{self.COLOR_RESET}")
+            print(f"{self.COLOR_DIM}{'─' * 60}{self.COLOR_RESET}")
+            print(f"{self.COLOR_WARNING}No plugins installed.{self.COLOR_RESET}")
+            print()
+            print(f"Plugin directory: {self.COLOR_BRIGHT_CYAN}{self.plugin_dir}{self.COLOR_RESET}")
+            print()
+            print(f"{self.COLOR_DIM}To create a plugin, create a .py file with a register_commands() function{self.COLOR_RESET}")
+            print(f"{self.COLOR_DIM}that returns a dictionary of command names to functions.{self.COLOR_RESET}")
+            print()
+            print(f"Or use: {self.COLOR_BRIGHT_GREEN}zps install <url>{self.COLOR_RESET} to install from a URL")
             print()
             return
         
-        print(f"\nLoaded Plugins ({len(plugin_files)}):")
+        print()
+        print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Loaded Plugins:{self.COLOR_RESET} {self.COLOR_BRIGHT_GREEN}({len(plugin_files)}){self.COLOR_RESET}")
+        print(f"{self.COLOR_DIM}{'─' * 60}{self.COLOR_RESET}")
         for plugin_file in plugin_files:
             plugin_name = os.path.basename(plugin_file)[:-3]
-            print(f"  • {plugin_name}")
+            print(f"  {self.COLOR_BRIGHT_GREEN}•{self.COLOR_RESET} {self.COLOR_BRIGHT_CYAN}{plugin_name}{self.COLOR_RESET}")
+        print(f"{self.COLOR_DIM}{'─' * 60}{self.COLOR_RESET}")
         print()
-        print(f"Plugin directory: {self.plugin_dir}")
-        print(f"Error log: {self.log_file}")
+        print(f"Plugin directory: {self.COLOR_BRIGHT_CYAN}{self.plugin_dir}{self.COLOR_RESET}")
+        print(f"Error log: {self.COLOR_BRIGHT_CYAN}{self.log_file}{self.COLOR_RESET}")
         print()
-        print("Commands:")
-        print("  plugins reload  - Reload all plugins without restarting")
+        print(f"{self.COLOR_BRIGHT_MAGENTA}Commands:{self.COLOR_RESET}")
+        print(f"  {self.COLOR_BRIGHT_GREEN}plugins reload{self.COLOR_RESET}  - Reload all plugins without restarting")
         print()
     
     def cmd_alias(self, args):
@@ -887,14 +1070,21 @@ ZDTT Terminal v{self.version}
         if not args:
             # Display all aliases
             if not self.aliases:
-                print("\nNo aliases defined.")
-                print("Usage: alias name=command")
-                print("Example: alias g=git")
+                print()
+                print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Aliases:{self.COLOR_RESET}")
+                print(f"{self.COLOR_DIM}{'─' * 60}{self.COLOR_RESET}")
+                print(f"{self.COLOR_WARNING}No aliases defined.{self.COLOR_RESET}")
+                print()
+                print(f"Usage: {self.COLOR_BRIGHT_GREEN}alias name=command{self.COLOR_RESET}")
+                print(f"Example: {self.COLOR_BRIGHT_GREEN}alias g=git{self.COLOR_RESET}")
                 print()
             else:
-                print("\nDefined Aliases:")
+                print()
+                print(f"{self.COLOR_BRIGHT_CYAN}{self.COLOR_BOLD}Defined Aliases:{self.COLOR_RESET} {self.COLOR_BRIGHT_GREEN}({len(self.aliases)}){self.COLOR_RESET}")
+                print(f"{self.COLOR_DIM}{'─' * 60}{self.COLOR_RESET}")
                 for name, command in sorted(self.aliases.items()):
-                    print(f"  {name}={command}")
+                    print(f"  {self.COLOR_BRIGHT_GREEN}{name}{self.COLOR_RESET}={self.COLOR_BRIGHT_CYAN}{command}{self.COLOR_RESET}")
+                print(f"{self.COLOR_DIM}{'─' * 60}{self.COLOR_RESET}")
                 print()
             return
         
@@ -975,7 +1165,7 @@ ZDTT Terminal v{self.version}
             
             # Validate it's a .py file
             if not filename.endswith('.py'):
-                print(f"Error: '{filename}' is not a Python file")
+                print(f"{self.COLOR_ERROR}Error: '{filename}' is not a Python file{self.COLOR_RESET}")
                 print("Plugin URLs must end with .py")
                 return
             
@@ -1002,7 +1192,7 @@ ZDTT Terminal v{self.version}
                 with open(target_path, 'wb') as f:
                     f.write(plugin_content)
                 
-                print(f"✓ Plugin '{filename}' installed successfully!")
+                print(f"{self.COLOR_BRIGHT_GREEN}✓ Plugin '{filename}' installed successfully!{self.COLOR_RESET}")
                 print(f"  Location: {target_path}")
                 print()
                 print("To use the plugin:")
@@ -1011,13 +1201,13 @@ ZDTT Terminal v{self.version}
                 print()
                 
             except urllib.error.HTTPError as e:
-                print(f"Error: Failed to download plugin (HTTP {e.code})")
+                print(f"{self.COLOR_ERROR}Error: Failed to download plugin (HTTP {e.code}){self.COLOR_RESET}")
                 print(f"URL: {url}")
             except urllib.error.URLError as e:
-                print(f"Error: Failed to connect to server")
+                print(f"{self.COLOR_ERROR}Error: Failed to connect to server{self.COLOR_RESET}")
                 print(f"Reason: {e.reason}")
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"{self.COLOR_ERROR}Error: {e}{self.COLOR_RESET}")
             
             return
         
@@ -1085,7 +1275,7 @@ ZDTT Terminal v{self.version}
             try:
                 print(now.strftime(custom_format))
             except Exception as e:
-                print(f"Error: Invalid format string - {e}")
+                print(f"{self.COLOR_ERROR}Error: Invalid format string - {e}{self.COLOR_RESET}")
             return
         
         # Default format: MM/DD/YY with time
@@ -1125,7 +1315,7 @@ ZDTT Terminal v{self.version}
         self.status_bar_color = color
         self.save_preferences()
         self._render_status_bar()
-        print(f"Status bar color updated to {color}.")
+        print(f"{self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} Status bar color updated to {self.COLOR_BRIGHT_CYAN}{color}{self.COLOR_RESET}.")
     
     def cmd_echo(self, args):
         """Echo the provided arguments"""
@@ -1502,12 +1692,20 @@ ZDTT Terminal v{self.version}
         if cmd in self.commands:
             self.commands[cmd](args)
         else:
-            print(f"Command not found: {cmd}")
-            print("Type 'help' for available commands.")
-            print("Tip: Use -oszdtt flag to run system commands")
+            print(f"{self.COLOR_ERROR}Command not found: {self.COLOR_BRIGHT_RED}{cmd}{self.COLOR_RESET}")
+            print(f"Type {self.COLOR_BRIGHT_GREEN}'help'{self.COLOR_RESET} for available commands.")
+            print(f"{self.COLOR_DIM}Tip: Use -oszdtt flag to run system commands{self.COLOR_RESET}")
     
     def run(self):
         """Main terminal loop"""
+        # Setup signal handler for terminal resize (SIGWINCH)
+        if sys.platform != 'win32':
+            try:
+                signal.signal(signal.SIGWINCH, self._handle_resize)
+            except (AttributeError, ValueError):
+                # SIGWINCH not available on this platform
+                pass
+        
         # Clear screen and display banner
         os.system('clear' if os.name != 'nt' else 'cls')
         self.initialize_status_bar()
