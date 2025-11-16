@@ -13,7 +13,7 @@
 <body>
   <header class="hero" id="top">
     <nav class="nav">
-      <div class="brand">ZDTT</div>
+      <div class="brand">By ZaneDev</div>
       <button class="nav__toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="primary-nav">
         <span></span>
         <span></span>
@@ -46,11 +46,11 @@
     <div class="hero__metrics">
       <div class="metric">
         <p class="metric__label">Current release</p>
-        <p class="metric__value">v0.1.2.b.3</p>
+        <p class="metric__value">v0.1.2.b.4</p>
       </div>
       <div class="metric">
         <p class="metric__label">Supported families</p>
-        <p class="metric__value">Debian · Arch</p>
+        <p class="metric__value">Debian · Arch · macOS</p>
       </div>
       <div class="metric">
         <p class="metric__label">Extension slots</p>
@@ -69,11 +69,11 @@
       <div class="feature-grid">
         <article class="card">
           <h3>Smart distro detection</h3>
-          <p>Installer inspects <code>/etc/os-release</code>, package managers, and user overrides to keep Debian and Arch flows tight.</p>
+          <p>Installer inspects <code>/etc/os-release</code>, package managers, and user overrides to keep Debian, macOS, and Arch flows tight.</p>
         </article>
         <article class="card">
           <h3>Always-on status bar</h3>
-          <p>Background thread renders a live status bar with branding, time, and color themes you can swap on the fly.</p>
+          <p>Background thread renders a live status bar with branding, time, and color themes you can swap on the fly. (unavailable on macOS)</p>
         </article>
         <article class="card">
           <h3>Plugin-friendly core</h3>
@@ -91,6 +91,10 @@
           <h3>Graceful fallbacks</h3>
           <p>Unsupported systems get friendly warnings, opt-in installs, and clear messaging so nothing breaks silently.</p>
         </article>
+        <article class="card">
+          <h3>Open source</h3>
+          <p>ZDTT is open source and free to use. You can find the source code on <a href="https://github.com/ZaneThePython/ZDTT">GitHub</a>.</p>
+        </article>
       </div>
     </section>
 
@@ -106,7 +110,7 @@
         </li>
         <li>
           <h3>Follow the prompts</h3>
-          <p>The script checks your distro, offers overrides, and handles both Debian (<code>apt</code>) and Arch (<code>pacman</code>) flows.</p>
+          <p>The script checks your distro, offers overrides, and handles both Debian (<code>apt</code>), Arch (<code>pacman</code>), and macOS (<code>brew</code>) flows.</p>
         </li>
         <li>
           <h3>Launch <code>zdtt</code></h3>
@@ -114,7 +118,7 @@
         </li>
       </ol>
       <div class="callout">
-        <p><strong>Heads up:</strong> ZDTT is Linux-only. Non-Debian/Arch installs can continue at your own risk—warnings are built in.</p>
+        <p><strong>Heads up:</strong> ZDTT is Linux-only (with eperimental macOS support). Non-Debian/Arch installs can continue at your own risk—warnings are built in.</p>
       </div>
     </section>
 
@@ -158,14 +162,15 @@ Traceback (most recent call last):
         <p>ZDTT thrives on experimentation. Fork it, vibe with it, file PRs, or just send screenshots.</p>
       </div>
       <div class="community__actions">
-        <a class="btn primary" href="mailto:hello@zane.org">Say hello</a>
-        <a class="btn ghost" href="https://github.com/" target="_blank" rel="noreferrer">View source</a>
+        <a class="btn primary" href="mailto:contact@zane.org">Contact us if issues arise</a>
+        <a class="btn ghost" href="https://github.com/ZaneThePython/ZDTT" target="_blank" rel="noreferrer">View source</a>
       </div>
     </section>
   </main>
 
   <footer class="footer">
-    <p>© <span id="year"></span> ZDTT • Built for Debian + Arch explorers.</p>
+    <p>© <span id="year"></span> - ZBF LLC</p>
+    <p>ZDTT - ZaneDev's Terminal Tools</p>
     <a href="#top">Back to top ↑</a>
   </footer>
 

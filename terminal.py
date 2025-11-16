@@ -18,6 +18,7 @@ import json
 import shlex
 import signal
 import ast
+import re
 from datetime import datetime
 import urllib.request
 import urllib.error
@@ -1804,7 +1805,47 @@ ZDTT Terminal v{self.version}
         recursive = '-r' in flags or '-rf' in flags or '-fr' in flags
         force = '-f' in flags or '-rf' in flags or '-fr' in flags
         
+        # Check for dangerous paths (root directories and critical system paths)
+        dangerous_paths = ['/', '/root', '/home', '/usr', '/bin', '/sbin', '/etc', '/var', 
+                          '/sys', '/proc', '/dev', '/boot', '/lib', '/lib64']
+        
+        # Filter out dangerous paths
+        allowed_paths = []
         for path in paths:
+            # Resolve to absolute path for checking
+            abs_path = os.path.abspath(path)
+            is_blocked = False
+            
+            # Block removal of root directory or critical system directories
+            if abs_path in dangerous_paths or abs_path == '/':
+                print(f"{self.COLOR_ERROR}🚨 SECURITY BLOCKED: Cannot remove '{path}' - this is a critical system directory!{self.COLOR_RESET}")
+                print(f"{self.COLOR_WARNING}This operation has been blocked for your safety.{self.COLOR_RESET}")
+                is_blocked = True
+            else:
+                # Block removal of paths under critical system directories
+                for dangerous in dangerous_paths:
+                    if abs_path.startswith(dangerous + '/'):
+                        # Allow user directories under /home
+                        if dangerous == '/home':
+                            if not abs_path.startswith(os.path.expanduser('~')):
+                                print(f"{self.COLOR_ERROR}🚨 SECURITY BLOCKED: Cannot remove '{path}' - this affects system directories!{self.COLOR_RESET}")
+                                print(f"{self.COLOR_WARNING}This operation has been blocked for your safety.{self.COLOR_RESET}")
+                                is_blocked = True
+                                break
+                        else:
+                            # Block any path under critical system directories
+                            print(f"{self.COLOR_ERROR}🚨 SECURITY BLOCKED: Cannot remove '{path}' - this is under a critical system directory!{self.COLOR_RESET}")
+                            print(f"{self.COLOR_WARNING}This operation has been blocked for your safety.{self.COLOR_RESET}")
+                            is_blocked = True
+                            break
+            
+            if not is_blocked:
+                allowed_paths.append(path)
+        
+        if not allowed_paths:
+            return
+        
+        for path in allowed_paths:
             try:
                 if os.path.islink(path):
                     os.unlink(path)
@@ -2074,8 +2115,69 @@ ZDTT Terminal v{self.version}
         print("Unable to locate the ZDTT updater.")
         print("Re-run the installer script or use 'zdtt update' from your shell if available.")
     
+    def _is_dangerous_command(self, command):
+        """Check if a command is dangerous and should be blocked."""
+        if not command or not command.strip():
+            return False
+        
+        # Normalize the command for checking (lowercase, remove extra spaces)
+        normalized = ' '.join(command.strip().lower().split())
+        
+        # List of dangerous patterns to block
+        dangerous_patterns = [
+            'rm -rf /',
+            'rm -rf / ',
+            'rm -rf / --no-preserve-root',
+            'rm -rf /*',
+            'rm -rf / *',
+            'rm -rf /root',
+            'rm -rf /home',
+            'rm -rf /usr',
+            'rm -rf /bin',
+            'rm -rf /sbin',
+            'rm -rf /etc',
+            'rm -rf /var',
+            'rm -rf /sys',
+            'rm -rf /proc',
+            'rm -rf /dev',
+            'rm -rf /boot',
+            'rm -rf /lib',
+            'rm -rf /lib64',
+            'sudo rm -rf /',
+            'sudo rm -rf /*',
+            'sudo rm -rf / --no-preserve-root',
+        ]
+        
+        # Check for dangerous patterns
+        for pattern in dangerous_patterns:
+            if pattern in normalized:
+                return True
+        
+        # Check for rm -rf followed by root directory patterns
+        # Pattern: rm -rf followed by / or /* or / with flags
+        if re.search(r'\brm\s+-rf\s+/(?:\s|$|/|\*)', normalized):
+            return True
+        
+        # Check for chmod/chown on critical system directories
+        critical_dirs = ['/bin', '/sbin', '/usr', '/etc', '/root', '/sys', '/proc', '/dev']
+        for dir_path in critical_dirs:
+            if f'chmod' in normalized and dir_path in normalized:
+                # Allow chmod on user directories, but warn about system dirs
+                if dir_path in ['/root', '/bin', '/sbin', '/usr', '/etc', '/sys', '/proc', '/dev']:
+                    if 'sudo' in normalized or 'su ' in normalized:
+                        return True
+        
+        return False
+    
     def _execute_system_command(self, command):
         """Execute a system command with real-time I/O streaming."""
+        # Check for dangerous commands first
+        if self._is_dangerous_command(command):
+            print(f"{self.COLOR_ERROR}🚨 SECURITY BLOCKED: This command is too dangerous to execute!{self.COLOR_RESET}")
+            print(f"{self.COLOR_WARNING}The command '{command}' has been blocked for your safety.{self.COLOR_RESET}")
+            print(f"{self.COLOR_DIM}If you really need to run this command, use your system shell directly.{self.COLOR_RESET}")
+            return
+        
         # Temporarily disable status bar updates during command execution
         status_bar_was_running = self.status_bar_thread and self.status_bar_thread.is_alive()
         
@@ -2172,11 +2274,24 @@ ZDTT Terminal v{self.version}
         # Expand aliases first
         command_line = self.expand_aliases(command_line)
         
+        # Check for dangerous commands before processing
+        if self._is_dangerous_command(command_line):
+            print(f"{self.COLOR_ERROR}🚨 SECURITY BLOCKED: This command is too dangerous to execute!{self.COLOR_RESET}")
+            print(f"{self.COLOR_WARNING}The command has been blocked for your safety.{self.COLOR_RESET}")
+            print(f"{self.COLOR_DIM}If you really need to run this command, use your system shell directly.{self.COLOR_RESET}")
+            return
+        
         # Check for -oszdtt flag (Outside ZDTT) - still supported for explicit shell execution
         if '-oszdtt' in command_line:
             # Remove the -oszdtt flag and execute as system command
             system_command = command_line.replace('-oszdtt', '').strip()
             if system_command:
+                # Check again after removing flag
+                if self._is_dangerous_command(system_command):
+                    print(f"{self.COLOR_ERROR}🚨 SECURITY BLOCKED: This command is too dangerous to execute!{self.COLOR_RESET}")
+                    print(f"{self.COLOR_WARNING}The command has been blocked for your safety.{self.COLOR_RESET}")
+                    print(f"{self.COLOR_DIM}If you really need to run this command, use your system shell directly.{self.COLOR_RESET}")
+                    return
                 self._execute_system_command(system_command)
             else:
                 print("No command specified with -oszdtt flag")
