@@ -582,6 +582,29 @@ case "$1" in
         echo "  • Plugin system"
         echo "  • Native command support"
         ;;
+    github)
+        GITHUB_URL="https://github.com/ZaneThePython/ZDTT"
+        echo "Opening ZDTT GitHub repository..."
+        
+        # Detect platform and use appropriate command to open URL
+        if [[ "$(uname)" == "Darwin" ]]; then
+            # macOS
+            open "$GITHUB_URL"
+        elif command -v xdg-open &> /dev/null; then
+            # Linux (most distributions)
+            xdg-open "$GITHUB_URL"
+        elif command -v x-www-browser &> /dev/null; then
+            # Linux (Debian/Ubuntu fallback)
+            x-www-browser "$GITHUB_URL"
+        elif command -v gnome-open &> /dev/null; then
+            # Linux (GNOME fallback)
+            gnome-open "$GITHUB_URL"
+        else
+            # Fallback: print URL and let user open manually
+            echo "Please open this URL in your browser:"
+            echo "$GITHUB_URL"
+        fi
+        ;;
     *)
         echo "ZDTT Terminal"
         echo ""
@@ -590,6 +613,7 @@ case "$1" in
         echo "  zdtt update       - Check for and install updates"
         echo "  zdtt installer    - Run installer (for updates/reinstall)"
         echo "  zdtt version      - Display version information"
+        echo "  zdtt github       - Open ZDTT GitHub repository"
         echo "  zdtt uninstall    - Uninstall ZDTT Terminal"
         echo ""
         ;;
