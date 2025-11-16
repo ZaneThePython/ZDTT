@@ -23,6 +23,27 @@ import urllib.request
 import urllib.error
 import time as time_module
 
+# Ensure local 'zdtt' package is importable both from repo and installed locations
+try:
+    # Probe a quick import to determine availability
+    import zdtt  # type: ignore
+except Exception:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        script_dir,
+        os.path.abspath(os.path.join(script_dir, '..')),
+        os.path.join(script_dir, 'zdtt'),
+        '/home/zane/ZDTT',
+    ]
+    for path_candidate in candidates:
+        if path_candidate and os.path.isdir(path_candidate) and path_candidate not in sys.path:
+            sys.path.insert(0, path_candidate)
+    # Best-effort: ignore failure here; regular imports will raise if still missing
+    try:
+        import zdtt  # type: ignore
+    except Exception:
+        pass
+
 from zdtt.plugins import (
     PROTECTED_COMMANDS as PLUGIN_PROTECTED_COMMANDS,
     validate_plugin_ast as plugins_validate_ast,
