@@ -1877,12 +1877,15 @@ ZDTT Terminal v{self.version}
             'install.sh'
         )
 
+        # Add --auto flag to enable auto-update (skip prompt)
+        update_args = ['update', '--auto'] + args
+
         if zdtt_wrapper:
-            subprocess.run([zdtt_wrapper, 'update'] + args)
+            subprocess.run([zdtt_wrapper] + update_args)
             return
 
         if os.path.isfile(installer_script):
-            subprocess.run(['bash', installer_script, 'update'] + args)
+            subprocess.run(['bash', installer_script] + update_args)
             return
 
         print("Unable to locate the ZDTT updater.")

@@ -335,6 +335,12 @@ case "$1" in
         python3 "$ZDTT_DIR/terminal.py"
         ;;
     update)
+        # Check for auto-update flag
+        AUTO_UPDATE=false
+        if [[ "$2" == "--auto" ]] || [[ "$2" == "--yes" ]]; then
+            AUTO_UPDATE=true
+        fi
+        
         echo "Checking for updates..."
         echo ""
         
@@ -369,8 +375,16 @@ case "$1" in
         else
             echo "🔔 Update available!"
             echo ""
-            read -p "Do you want to update now? (yes/no): " -r
-            echo ""
+            
+            # Auto-update if flag is set, otherwise prompt
+            if [ "$AUTO_UPDATE" = true ]; then
+                REPLY="yes"
+                echo "Auto-updating..."
+                echo ""
+            else
+                read -p "Do you want to update now? (yes/no): " -r
+                echo ""
+            fi
             
             if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
                 echo "Updating ZDTT Terminal..."
