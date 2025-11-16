@@ -72,10 +72,20 @@ if [ -f "$BIN_DIR/zdtt" ] || [ -d "$INSTALL_DIR" ]; then
     esac
 fi
 
+# Check if running on macOS
+IS_MAC=false
+if [[ "$(uname)" == "Darwin" ]]; then
+    IS_MAC=true
+    DETECTED_DISTRO="mac"
+    echo -e "${GREEN}✓${NC} macOS detected"
+fi
+
 # Check if running on a supported Linux distribution
 IS_DEBIAN=false
 IS_ARCH=false
-DETECTED_DISTRO="other"
+if [ "$IS_MAC" = false ]; then
+    DETECTED_DISTRO="other"
+fi
 
 OS_ID=""
 OS_LIKE=""
@@ -86,7 +96,10 @@ if [ -f /etc/os-release ]; then
     OS_LIKE=$(echo "${ID_LIKE:-}" | tr '[:upper:]' '[:lower:]')
 fi
 
-if [ -f /etc/debian_version ]; then
+if [ "$IS_MAC" = true ]; then
+    # macOS detected, skip Linux detection
+    :
+elif [ -f /etc/debian_version ]; then
     IS_DEBIAN=true
     DETECTED_DISTRO="debian"
     echo -e "${GREEN}✓${NC} Debian-based Linux detected"
@@ -133,25 +146,35 @@ else
 fi
 
 echo "Detected distribution: ${DETECTED_DISTRO}"
-read -p "Override detection? (debian/arch/other, Enter to keep): " -r USER_OVERRIDE
+read -p "Override detection? (debian/arch/mac/other, Enter to keep): " -r USER_OVERRIDE
 USER_OVERRIDE=$(echo "$USER_OVERRIDE" | tr '[:upper:]' '[:lower:]')
 
 case "$USER_OVERRIDE" in
     debian)
         IS_DEBIAN=true
         IS_ARCH=false
+        IS_MAC=false
         DETECTED_DISTRO="debian"
         echo "Override applied: Debian-based system selected."
         ;;
     arch)
         IS_DEBIAN=false
         IS_ARCH=true
+        IS_MAC=false
         DETECTED_DISTRO="arch"
         echo "Override applied: Arch-based system selected."
+        ;;
+    mac)
+        IS_DEBIAN=false
+        IS_ARCH=false
+        IS_MAC=true
+        DETECTED_DISTRO="mac"
+        echo "Override applied: macOS selected."
         ;;
     other)
         IS_DEBIAN=false
         IS_ARCH=false
+        IS_MAC=false
         DETECTED_DISTRO="other"
         echo "Override applied: Unsupported/Other selected."
         ;;
@@ -168,7 +191,90 @@ if ! command -v python3 &> /dev/null; then
     echo -e "${RED}✗${NC} Python 3 is not installed"
     echo ""
     
-    if [ "$IS_DEBIAN" = true ]; then
+    if [ "$IS_MAC" = true ]; then
+        echo "Checking for Homebrew..."
+        BREW_PATH=""
+        if command -v brew &> /dev/null; then
+            BREW_PATH="brew"
+        elif [ -f "/opt/homebrew/bin/brew" ]; then
+            BREW_PATH="/opt/homebrew/bin/brew"
+        elif [ -f "/usr/local/bin/brew" ]; then
+            BREW_PATH="/usr/local/bin/brew"
+        fi
+        
+        if [ -n "$BREW_PATH" ]; then
+            echo "Installing Python 3 via Homebrew..."
+            $BREW_PATH install python3
+            
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}Failed to install Python 3${NC}"
+                echo "Please install Python 3 manually: $BREW_PATH install python3"
+                echo ""
+                echo "Press any key to exit..."
+                read -n 1 -s -r
+                exit 1
+            fi
+            
+            echo -e "${GREEN}✓${NC} Python 3 installed successfully"
+        else
+            echo -e "${RED}Homebrew is not installed.${NC}"
+            echo ""
+            echo "Homebrew is required for package management on macOS."
+            echo ""
+            read -p "Would you like to install Homebrew now? (yes/no): " -r
+            echo ""
+            if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+                echo "Installing Homebrew..."
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✓${NC} Homebrew installed successfully"
+                    echo ""
+                    echo "Adding Homebrew to PATH..."
+                    # Add Homebrew to PATH for this session
+                    if [ -d "/opt/homebrew/bin" ]; then
+                        export PATH="/opt/homebrew/bin:$PATH"
+                        eval "$(/opt/homebrew/bin/brew shellenv)"
+                    elif [ -d "/usr/local/bin" ]; then
+                        export PATH="/usr/local/bin:$PATH"
+                        eval "$(/usr/local/bin/brew shellenv)"
+                    fi
+                    echo ""
+                    echo "Installing Python 3..."
+                    brew install python3
+                    
+                    if [ $? -ne 0 ]; then
+                        echo -e "${RED}Failed to install Python 3${NC}"
+                        echo "Please install Python 3 manually: brew install python3"
+                        echo ""
+                        echo "Press any key to exit..."
+                        read -n 1 -s -r
+                        exit 1
+                    fi
+                    
+                    echo -e "${GREEN}✓${NC} Python 3 installed successfully"
+                else
+                    echo -e "${RED}Failed to install Homebrew${NC}"
+                    echo "Please install Homebrew manually:"
+                    echo "  /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+                    echo ""
+                    echo "Press any key to exit..."
+                    read -n 1 -s -r
+                    exit 1
+                fi
+            else
+                echo -e "${RED}Python 3 is required but cannot be installed without Homebrew.${NC}"
+                echo ""
+                echo "Please install Homebrew and Python 3 manually:"
+                echo "  /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+                echo "  brew install python3"
+                echo ""
+                echo "Press any key to exit..."
+                read -n 1 -s -r
+                exit 1
+            fi
+        fi
+    elif [ "$IS_DEBIAN" = true ]; then
         echo "Installing Python 3..."
         
         # Update package list and install Python 3
@@ -207,6 +313,7 @@ if ! command -v python3 &> /dev/null; then
         echo "Please install Python 3 manually using your package manager:"
         echo "  • Debian/Ubuntu: sudo apt-get install python3"
         echo "  • Arch/Manjaro: sudo pacman -S python"
+        echo "  • macOS: brew install python3"
         echo "  • Fedora: sudo dnf install python3"
         echo "  • openSUSE: sudo zypper install python3"
         echo ""
