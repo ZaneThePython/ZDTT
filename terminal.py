@@ -272,6 +272,7 @@ class ZDTTTerminal:
         self.resize_lock = threading.Lock()  # Lock for resize operations
         self.safe_mode = False  # Safe mode flag (no plugins loaded)
         self.quarantine_warnings = []  # Store warnings for plugins quarantined at startup
+        self.trusted_plugins = set()  # Plugins allowed to use imports
         
         # Setup logging for plugins
         self.setup_logging()
@@ -416,6 +417,10 @@ class ZDTTTerminal:
             with open(self.config_file, 'r') as f:
                 data = json.load(f)
             self.status_bar_color = data.get('status_bar_color', self.status_bar_color)
+            # Trusted plugins that are allowed to use imports
+            trusted = data.get('trusted_plugins', [])
+            if isinstance(trusted, list):
+                self.trusted_plugins = set(trusted)
             # Note: distro is loaded in check_system_compatibility before terminal init
         except FileNotFoundError:
             pass
@@ -432,6 +437,8 @@ class ZDTTTerminal:
             data = {}
         
         data['status_bar_color'] = self.status_bar_color
+        # Persist trusted plugins as a sorted list for readability
+        data['trusted_plugins'] = sorted(self.trusted_plugins)
         # Note: distro is saved in check_system_compatibility
         
         with open(self.config_file, 'w') as f:
@@ -902,7 +909,7 @@ ZDTT Terminal v{self.version}
                 # Read plugin file
                 with open(plugin_file, 'r') as f:
                     plugin_code = f.read()
-                
+
                 # Step 1: AST validation - check for top-level code
                 try:
                     self._validate_plugin_ast(plugin_code, plugin_name)
@@ -919,8 +926,52 @@ ZDTT Terminal v{self.version}
                     # Store warning to display after banner
                     self.quarantine_warnings.append(warning_msg)
                     continue
-                
-                # Step 2: Sandboxed execution
+
+                # Step 2: Detect import usage and, if present, require trust
+                plugin_uses_imports = False
+                try:
+                    tree = ast.parse(plugin_code)
+                    for node in ast.walk(tree):
+                        if isinstance(node, (ast.Import, ast.ImportFrom)):
+                            plugin_uses_imports = True
+                            break
+                except SyntaxError:
+                    # Should already have been caught by _validate_plugin_ast, but be defensive
+                    plugin_uses_imports = False
+
+                plugin_trusted = False
+                if plugin_uses_imports:
+                    if plugin_name in self.trusted_plugins:
+                        plugin_trusted = True
+                    else:
+                        print()
+                        print(f"{self.COLOR_WARNING}⚠ Plugin '{plugin_name}' is requesting to use imports.{self.COLOR_RESET}")
+                        print(f"{self.COLOR_DIM}  Imports can load external Python modules. Only trust plugins from sources you recognize.{self.COLOR_RESET}")
+                        answer = input("Do you trust this plugin and allow imports? (yes/no): ").strip().lower()
+                        if answer == "yes":
+                            self.trusted_plugins.add(plugin_name)
+                            # Persist updated trust list
+                            try:
+                                self.save_preferences()
+                            except Exception as e:
+                                logging.error(f"Failed to save trusted plugins list: {e}")
+                            plugin_trusted = True
+                            print(f"{self.COLOR_BRIGHT_GREEN}✓ Plugin '{plugin_name}' marked as trusted for imports.{self.COLOR_RESET}")
+                        else:
+                            # User did not trust the plugin; quarantine it
+                            reason = "Plugin uses imports and was not trusted by the user."
+                            self._move_to_quarantine(plugin_file, reason)
+                            quarantined_count += 1
+                            warning_msg = (
+                                f"{self.COLOR_ERROR}🚨 SECURITY WARNING: Plugin '{plugin_name}' has been quarantined!{self.COLOR_RESET}\n"
+                                f"  Reason: {reason}\n"
+                                f"  The plugin attempted to use imports and has been disabled.\n"
+                                f"  Check {self.quarantine_dir} for details.\n"
+                            )
+                            self.quarantine_warnings.append(warning_msg)
+                            continue
+
+                # Step 3: Sandboxed execution
                 # Create a restricted namespace (sandbox)
                 safe_builtins = {
                     # Only allow safe builtins
@@ -942,6 +993,11 @@ ZDTT Terminal v{self.version}
                     'TypeError': TypeError,
                     'RuntimeError': RuntimeError,
                 }
+
+                # Allow imports only for trusted plugins that use them
+                if plugin_uses_imports and plugin_trusted:
+                    safe_builtins['__import__'] = __import__
+
                 sandbox = {
                     '__builtins__': safe_builtins
                 }
