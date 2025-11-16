@@ -605,22 +605,54 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     echo ""
     echo -e "${YELLOW}Warning: $HOME/.local/bin is not in your PATH${NC}"
     echo ""
-    echo "To use the 'zdtt' command, add the following line to your ~/.bashrc:"
+    
+    # Detect current shell
+    # Check environment variables first (most reliable)
+    if [[ -n "$ZSH_VERSION" ]]; then
+        SHELL_CONFIG="$HOME/.zshrc"
+        SHELL_NAME="zsh"
+    elif [[ -n "$BASH_VERSION" ]]; then
+        SHELL_CONFIG="$HOME/.bashrc"
+        SHELL_NAME="bash"
+    else
+        # Fallback: check $SHELL variable
+        CURRENT_SHELL="${SHELL##*/}"
+        if [[ "$CURRENT_SHELL" == "zsh" ]] || [[ "$SHELL" == *"zsh"* ]]; then
+            SHELL_CONFIG="$HOME/.zshrc"
+            SHELL_NAME="zsh"
+        else
+            # Default to bash if we can't determine
+            SHELL_CONFIG="$HOME/.bashrc"
+            SHELL_NAME="bash"
+        fi
+    fi
+    
+    echo "To use the 'zdtt' command, add the following line to your $SHELL_CONFIG:"
     echo ""
     echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
     echo ""
-    echo "Then run: source ~/.bashrc"
+    echo "Then run: source $SHELL_CONFIG"
     echo ""
     
     # Ask if user wants to add it automatically
-    read -p "Would you like to add it to your ~/.bashrc now? (y/n) " -n 1 -r
+    read -p "Would you like to add it to your $SHELL_CONFIG now? (y/n) " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "" >> "$HOME/.bashrc"
-        echo "# Added by ZDTT Terminal installer" >> "$HOME/.bashrc"
-        echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$HOME/.bashrc"
-        echo -e "${GREEN}✓${NC} Added to ~/.bashrc"
-        echo "Please run: source ~/.bashrc"
+        # Create the config file if it doesn't exist
+        if [ ! -f "$SHELL_CONFIG" ]; then
+            touch "$SHELL_CONFIG"
+        fi
+        
+        # Check if the PATH line already exists
+        if ! grep -q 'export PATH="\$HOME/.local/bin:\$PATH"' "$SHELL_CONFIG"; then
+            echo "" >> "$SHELL_CONFIG"
+            echo "# Added by ZDTT Terminal installer" >> "$SHELL_CONFIG"
+            echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_CONFIG"
+            echo -e "${GREEN}✓${NC} Added to $SHELL_CONFIG"
+            echo "Please run: source $SHELL_CONFIG"
+        else
+            echo -e "${GREEN}✓${NC} PATH already configured in $SHELL_CONFIG"
+        fi
     fi
 else
     echo -e "${GREEN}✓${NC} ~/.local/bin is already in your PATH"
