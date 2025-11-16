@@ -21,6 +21,7 @@ import ast
 from datetime import datetime
 import urllib.request
 import urllib.error
+import webbrowser
 import time as time_module
 
 
@@ -432,6 +433,7 @@ class ZDTTTerminal:
             'time': self.cmd_time,
             'statusbar': self.cmd_statusbar,
             'update': self.cmd_update,
+            'github': self.cmd_github,
             # System commands
             'ls': self.cmd_ls,
             'pwd': self.cmd_pwd,
@@ -1270,6 +1272,7 @@ ZDTT Terminal v{self.version}
         print(f"  {self.COLOR_BRIGHT_GREEN}time{self.COLOR_RESET} [options]       - Display date/time (MM/DD/YY 12h default)")
         print(f"  {self.COLOR_BRIGHT_GREEN}statusbar{self.COLOR_RESET} color <name> - Change status bar highlight color")
         print(f"  {self.COLOR_BRIGHT_GREEN}update{self.COLOR_RESET}               - Run the ZDTT updater helper")
+        print(f"  {self.COLOR_BRIGHT_GREEN}github{self.COLOR_RESET}               - Open ZDTT GitHub repository")
         print(f"  {self.COLOR_BRIGHT_GREEN}exit{self.COLOR_RESET}                 - Exit ZDTT (return to shell)")
         print(f"  {self.COLOR_BRIGHT_GREEN}quit{self.COLOR_RESET}                 - Quit and close terminal window")
         print()
@@ -2051,6 +2054,19 @@ ZDTT Terminal v{self.version}
                 print("Try installing with: sudo apt-get install python3-pip")
             elif self.is_arch:
                 print("Try installing with: sudo pacman -S python-pip")
+
+    def cmd_github(self, args):
+        """Open the ZDTT GitHub repository in the default browser."""
+        github_url = "https://github.com/ZaneThePython/ZDTT"
+        print(f"{self.COLOR_BRIGHT_CYAN}Opening ZDTT GitHub repository...{self.COLOR_RESET}")
+        print(f"{self.COLOR_DIM}URL: {github_url}{self.COLOR_RESET}")
+        print()
+        try:
+            webbrowser.open(github_url)
+            print(f"{self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} GitHub repository opened in your default browser")
+        except Exception as e:
+            print(f"{self.COLOR_ERROR}Failed to open browser: {e}{self.COLOR_RESET}")
+            print(f"{self.COLOR_DIM}Please visit: {github_url}{self.COLOR_RESET}")
 
     def cmd_update(self, args):
         """Trigger the external updater shipping with ZDTT."""
