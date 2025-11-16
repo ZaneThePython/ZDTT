@@ -428,9 +428,10 @@ fi
 
 # Create the zdtt wrapper script
 cat > "$BIN_DIR/zdtt" << 'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # ZDTT Terminal Wrapper
+# Compatible with both bash and zsh
 #
 
 ZDTT_DIR="$HOME/.local/share/zdtt"
@@ -630,27 +631,41 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     echo -e "${YELLOW}Warning: $HOME/.local/bin is not in your PATH${NC}"
     echo ""
     
-    # Detect current shell
-    # Check environment variables first (most reliable)
+    # Detect user's default shell (not the script's shell)
+    # Priority: 1) Check if running in zsh, 2) Check if .zshrc exists, 3) Check $SHELL, 4) Check /etc/passwd, 5) Default to bash
+    SHELL_CONFIG="$HOME/.bashrc"
+    SHELL_NAME="bash"
+    
+    # Check if running in zsh (most reliable - immediate detection)
     if [[ -n "$ZSH_VERSION" ]]; then
         SHELL_CONFIG="$HOME/.zshrc"
         SHELL_NAME="zsh"
-    elif [[ -n "$BASH_VERSION" ]]; then
-        SHELL_CONFIG="$HOME/.bashrc"
-        SHELL_NAME="bash"
+    # Check if .zshrc exists (strong indicator user uses zsh)
+    elif [ -f "$HOME/.zshrc" ]; then
+        SHELL_CONFIG="$HOME/.zshrc"
+        SHELL_NAME="zsh"
+    # Check $SHELL environment variable
+    elif [[ -n "$SHELL" ]] && [[ "$SHELL" == *"zsh"* ]]; then
+        SHELL_CONFIG="$HOME/.zshrc"
+        SHELL_NAME="zsh"
+    # Check user's default shell from /etc/passwd
     else
-        # Fallback: check $SHELL variable
-        CURRENT_SHELL="${SHELL##*/}"
-        if [[ "$CURRENT_SHELL" == "zsh" ]] || [[ "$SHELL" == *"zsh"* ]]; then
+        USER_SHELL=""
+        if command -v getent &> /dev/null; then
+            USER_SHELL=$(getent passwd "$USER" 2>/dev/null | cut -d: -f7)
+        elif [ -f /etc/passwd ]; then
+            USER_SHELL=$(grep "^$USER:" /etc/passwd 2>/dev/null | cut -d: -f7)
+        fi
+        
+        if [[ -n "$USER_SHELL" ]] && [[ "$USER_SHELL" == *"zsh"* ]]; then
             SHELL_CONFIG="$HOME/.zshrc"
             SHELL_NAME="zsh"
-        else
-            # Default to bash if we can't determine
-            SHELL_CONFIG="$HOME/.bashrc"
-            SHELL_NAME="bash"
         fi
     fi
     
+    echo -e "${GREEN}Detected shell: ${SHELL_NAME}${NC}"
+    echo -e "Config file: ${SHELL_CONFIG}"
+    echo ""
     echo "To use the 'zdtt' command, add the following line to your $SHELL_CONFIG:"
     echo ""
     echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
@@ -667,15 +682,28 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
             touch "$SHELL_CONFIG"
         fi
         
-        # Check if the PATH line already exists
-        if ! grep -q 'export PATH="\$HOME/.local/bin:\$PATH"' "$SHELL_CONFIG"; then
+        # Check if the PATH line already exists (check for various formats)
+        PATH_ALREADY_SET=false
+        if grep -q '\.local/bin' "$SHELL_CONFIG" 2>/dev/null; then
+            PATH_ALREADY_SET=true
+        fi
+        
+        if [ "$PATH_ALREADY_SET" = false ]; then
             echo "" >> "$SHELL_CONFIG"
             echo "# Added by ZDTT Terminal installer" >> "$SHELL_CONFIG"
             echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_CONFIG"
             echo -e "${GREEN}✓${NC} Added to $SHELL_CONFIG"
-            echo "Please run: source $SHELL_CONFIG"
+            echo ""
+            echo "To apply the changes, run:"
+            echo "  source $SHELL_CONFIG"
+            echo ""
+            echo "Or open a new terminal window."
         else
             echo -e "${GREEN}✓${NC} PATH already configured in $SHELL_CONFIG"
+            echo ""
+            echo "If 'zdtt' command is not available, run:"
+            echo "  source $SHELL_CONFIG"
+            echo ""
         fi
     fi
 else
@@ -692,3 +720,4 @@ echo "  zdtt start"
 echo ""
 echo "Press any key to exit..."
 read -n 1 -s -r
+
