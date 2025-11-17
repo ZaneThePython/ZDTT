@@ -1,3 +1,5 @@
+<img src="https://zdtt.zane.org/zdtt.png" width=100>
+
 # ZDTT Terminal
 
 A Python-based, Linux-first custom shell environment with plugin support, aliases, banners, and a modern command experience.
