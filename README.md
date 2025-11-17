@@ -70,6 +70,12 @@ Disabled automatically on macOS.
 
 ---
 
+## 🎨 Images
+
+<img src="https://zdtt.zane.org/image.png">
+
+---
+
 ## 🚀 Installation
 
 ### Quick Install
