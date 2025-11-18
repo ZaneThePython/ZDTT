@@ -1344,7 +1344,7 @@ ZDTT Terminal v{self.version}
         elif self.is_arch:
             print(f"    {self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} Arch Linux {self.COLOR_BRIGHT_GREEN}(fully supported){self.COLOR_RESET}")
         elif self.is_mac:
-            print(f"    {self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} macOS {self.COLOR_BRIGHT_GREEN}(fully supported){self.COLOR_RESET}")
+            print(f"    {self.COLOR_BRIGHT_GREEN}✓{self.COLOR_RESET} macOS {self.COLOR_BRIGHT_GREEN}(kinda supported){self.COLOR_RESET}")
         else:
             print(f"    {self.COLOR_WARNING}⚠{self.COLOR_RESET} Unsupported system {self.COLOR_WARNING}(limited support){self.COLOR_RESET}")
         
